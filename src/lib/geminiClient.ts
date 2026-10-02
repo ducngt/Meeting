@@ -81,7 +81,7 @@ export function parseJSONSafely(text: string): any {
 }
 
 // Danh sách mô hình thử lần lượt nếu mô hình trước bị quá tải hoặc không tồn tại
-const WORKER_URL = 'https://TEN-WORKER.TAI-KHOAN.workers.dev/analyze';
+const WORKER_URL = 'https://meeting-ai.ducngt.workers.dev/analyze';
 
 // Gemini giới hạn ~20 MB cho toàn bộ yêu cầu gửi kèm dữ liệu âm thanh trực tiếp
 const MAX_BASE64_LENGTH = 19 * 1024 * 1024;

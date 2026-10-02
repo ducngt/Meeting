@@ -1,7 +1,7 @@
 /**
  * Meeting Assistant - Trường Đại học Sư phạm Kỹ thuật Nam Định (NUTE)
  * Hệ thống trợ lý ghi âm và soạn thảo Biên bản cuộc họp
- * Hỗ trợ đa Trợ lý AI (ChatGPT, Gemini, Claude, DeepSeek) không cần Key API
+ * Xử lý âm thanh bằng Gemini; lựa chọn phong cách soạn thảo trên giao diện
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -67,7 +67,7 @@ const AI_ASSISTANTS: AiAssistantOption[] = [
   {
     id: 'chatgpt',
     name: 'ChatGPT',
-    provider: 'OpenAI (GPT-4o)',
+    provider: 'Phong cách văn bản',
     description: 'Văn phong hành chính trang trọng, súc tích, mạch lạc và bám sát quy chuẩn văn thư.',
     badge: 'Chuyên văn bản',
     color: 'text-emerald-700',
@@ -77,7 +77,7 @@ const AI_ASSISTANTS: AiAssistantOption[] = [
   {
     id: 'gemini',
     name: 'Google Gemini',
-    provider: 'Google (2.5 Flash)',
+    provider: 'Xử lý bằng Gemini',
     description: 'Tối ưu hóa nhận diện giọng nói tiếng Việt đa phương thức và tổng hợp biên bản siêu tốc.',
     badge: 'Tốc độ cao',
     color: 'text-blue-700',
@@ -87,7 +87,7 @@ const AI_ASSISTANTS: AiAssistantOption[] = [
   {
     id: 'claude',
     name: 'Claude',
-    provider: 'Anthropic (Claude 3.5)',
+    provider: 'Phong cách lập luận',
     description: 'Lập luận logic chặt chẽ, tổng hợp thấu đáo các luồng ý kiến thảo luận và kết luận chỉ đạo.',
     badge: 'Lập luận sâu sắc',
     color: 'text-purple-700',
@@ -97,7 +97,7 @@ const AI_ASSISTANTS: AiAssistantOption[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek AI',
-    provider: 'DeepSeek (V3 / R1)',
+    provider: 'Phong cách phân công',
     description: 'Bóc tách trách nhiệm chi tiết, thiết lập ma trận phân công công việc và rà soát tiến độ tối ưu.',
     badge: 'Phân công nhiệm vụ',
     color: 'text-indigo-700',
@@ -115,8 +115,9 @@ export default function App() {
   // Yêu cầu 4: Bỏ hết dữ liệu ban đầu về nội dung mẫu cuộc họp (khởi tạo null hoàn toàn)
   const [minutes, setMinutes] = useState<AdministrativeMinutes | null>(null);
 
-  // Yêu cầu 5: Box lựa chọn trợ lý AI (không cần Key API)
+  // Lựa chọn phong cách soạn thảo; bộ xử lý hiện tại là Gemini
   const [selectedAi, setSelectedAi] = useState<'chatgpt' | 'gemini' | 'claude' | 'deepseek'>('chatgpt');
+  const currentAssistant = AI_ASSISTANTS.find(ai => ai.id === selectedAi)!;
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try {
       return localStorage.getItem('gemini_api_key') || '';
@@ -324,14 +325,14 @@ export default function App() {
       return;
     }
     if (!geminiKey.trim()) {
-      setRecordError('Vui lòng nhập khóa Google Gemini API ở ô phía trên trước khi soạn thảo.');
+      setRecordError(`Vui lòng mở Cấu hình: ${currentAssistant.name} và nhập khóa Gemini để phân tích âm thanh.`);
       return;
     }
 
-    const currentAi = AI_ASSISTANTS.find((a) => a.id === selectedAi);
+    const currentAi = currentAssistant;
     setIsAnalyzing(true);
     setRecordError(null);
-    setAnalysisStatus(`Trợ lý ${currentAi?.name} đang kết nối và xử lý tệp âm thanh cuộc họp...`);
+    setAnalysisStatus(`Gemini đang xử lý âm thanh theo phong cách ${currentAi.name}...`);
 
     try {
       const base64 = await blobToBase64(audioBlob);
@@ -346,7 +347,7 @@ export default function App() {
         else mimeType = 'audio/webm';
       }
 
-      setAnalysisStatus(`Trợ lý ${currentAi?.name} đang gỡ băng lời nói tiếng Việt và tổng hợp các ý kiến thảo luận...`);
+      setAnalysisStatus(`Gemini đang gỡ băng và soạn theo phong cách ${currentAi.name}...`);
 
       const data = await analyzeAudioWithGemini({
         apiKey: geminiKey,
@@ -356,7 +357,7 @@ export default function App() {
         aiAssistant: selectedAi,
       });
 
-      setAnalysisStatus(`Trợ lý ${currentAi?.name} đang hoàn thiện Biên bản cuộc họp chuẩn thể thức Nghị định 30/2020/NĐ-CP...`);
+      setAnalysisStatus(`Đang hoàn thiện biên bản theo phong cách ${currentAi.name}...`);
 
       if (data.segments && Array.isArray(data.segments)) {
         setSegments(data.segments);
@@ -659,7 +660,7 @@ Nơi nhận:
                 <div className="flex items-center gap-2">
                   <Bot className="w-5 h-5 text-[#0A1E60]" />
                   <label htmlFor="ai-assistant-select" className="font-bold text-sm sm:text-base text-[#0A1E60] uppercase">
-                    Lựa chọn Trợ lý AI phân tích & soạn thảo biên bản
+                    Lựa chọn phong cách soạn thảo biên bản
                   </label>
                 </div>
 
@@ -667,12 +668,16 @@ Nơi nhận:
                   <select
                     id="ai-assistant-select"
                     value={selectedAi}
-                    onChange={(e) => setSelectedAi(e.target.value as any)}
+                    onChange={(e) => {
+                      setSelectedAi(e.target.value as AiAssistantOption['id']);
+                      setShowKey(false);
+                      setRecordError(null);
+                    }}
                     className="w-full px-3.5 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-lg font-bold text-[#0A1E60] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0A1E60] focus:bg-white transition cursor-pointer"
                   >
                     {AI_ASSISTANTS.map((ai) => (
                       <option key={ai.id} value={ai.id}>
-                        {ai.name} ({ai.provider}) - {ai.badge}
+                        {ai.name} — {ai.badge}
                       </option>
                     ))}
                   </select>
@@ -683,7 +688,7 @@ Nơi nhận:
               <div className="bg-slate-50 p-2.5 rounded-md border border-slate-200 flex items-center justify-between text-xs text-slate-700">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-[#0A1E60]">
-                    Trợ lý đang chọn: {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name} ({AI_ASSISTANTS.find((a) => a.id === selectedAi)?.provider})
+                    Phong cách đang chọn: {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name} ({AI_ASSISTANTS.find((a) => a.id === selectedAi)?.provider})
                   </span>
                   <span className="text-slate-400">|</span>
                   <span className="text-slate-600 hidden sm:inline">
@@ -698,11 +703,11 @@ Nơi nhận:
               {/* Cấu hình AI thu gọn */}
               <details className="bg-slate-50 border border-slate-200 rounded-md p-3">
                 <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                  Cấu hình AI — tùy chọn
+                  Cấu hình: {currentAssistant.name}
                 </summary>
                 <div className="mt-3 space-y-2">
                   <label htmlFor="gemini-key" className="block text-xs font-semibold text-slate-700">
-                    Khóa Google Gemini API
+                    Khóa xử lý âm thanh — Google Gemini API
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -710,7 +715,7 @@ Nơi nhận:
                       type={showKey ? 'text' : 'password'}
                       value={geminiKey}
                       onChange={(e) => updateGeminiKey(e.target.value)}
-                      placeholder="Nhập khóa nếu sử dụng Gemini API"
+                      placeholder={`Nhập khóa Gemini để xử lý theo phong cách ${currentAssistant.name}`}
                       autoComplete="off"
                       className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -723,8 +728,9 @@ Nơi nhận:
                     </button>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Có thể để trống khi ghi âm hoặc tải bản ghi. Chức năng phân tích bằng Gemini hiện cần khóa API.
-                    Khóa được lưu trong trình duyệt; khi phân tích, âm thanh được gửi tới Google.
+                    Phong cách đang chọn: {currentAssistant.name}. Bộ xử lý âm thanh hiện tại là Google Gemini,
+                    vì vậy ô này nhận khóa Gemini cho tất cả lựa chọn. Có thể để trống khi ghi âm hoặc tải bản ghi;
+                    cần khóa khi phân tích. Âm thanh được gửi tới Google khi xử lý.
                   </p>
                 </div>
               </details>
@@ -851,12 +857,12 @@ Nơi nhận:
                       {isAnalyzing ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin text-yellow-300" />
-                          <span>Trợ lý {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name} đang soạn thảo...</span>
+                          <span>Gemini đang soạn theo phong cách {currentAssistant.name}...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 text-yellow-300" />
-                          <span>Gỡ băng & Soạn thảo bằng {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name}</span>
+                          <span>Gỡ băng & Soạn theo phong cách {currentAssistant.name}</span>
                         </>
                       )}
                     </button>

@@ -78,7 +78,7 @@ const AI_ASSISTANTS: AiAssistantOption[] = [
     id: 'gemini',
     name: 'Google Gemini',
     provider: 'Xử lý bằng Gemini',
-    description: 'Tối ưu hóa nhận diện giọng nói tiếng Việt đa phương thức và tổng hợp biên bản siêu tốc.',
+    description: 'Gỡ băng và tổng hợp nội dung bằng Google Gemini.',
     badge: 'Tốc độ cao',
     color: 'text-blue-700',
     borderActive: 'border-blue-500 bg-blue-50/40 ring-2 ring-blue-500/20',
@@ -118,6 +118,12 @@ export default function App() {
   // Lựa chọn phong cách soạn thảo; bộ xử lý hiện tại là Gemini
   const [selectedAi, setSelectedAi] = useState<'chatgpt' | 'gemini' | 'claude' | 'deepseek'>('chatgpt');
   const currentAssistant = AI_ASSISTANTS.find(ai => ai.id === selectedAi)!;
+  // Một nguồn duy nhất cho nhãn dịch vụ thực sự nhận dữ liệu.
+  const processingProvider = {
+    name: 'Google Gemini',
+    keyLabel: 'Khóa API Google Gemini',
+    destination: 'Google',
+  };
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try {
       return localStorage.getItem('gemini_api_key') || '';
@@ -325,14 +331,14 @@ export default function App() {
       return;
     }
     if (!geminiKey.trim()) {
-      setRecordError(`Vui lòng mở Cấu hình: ${currentAssistant.name} và nhập khóa Gemini để phân tích âm thanh.`);
+      setRecordError(`Phong cách ${currentAssistant.name}: hãy mở cấu hình và nhập khóa ${processingProvider.name} để phân tích âm thanh.`);
       return;
     }
 
-    const currentAi = currentAssistant;
+
     setIsAnalyzing(true);
     setRecordError(null);
-    setAnalysisStatus(`Gemini đang xử lý âm thanh theo phong cách ${currentAi.name}...`);
+    setAnalysisStatus(`${processingProvider.name} đang xử lý âm thanh — phong cách ${currentAssistant.name}...`);
 
     try {
       const base64 = await blobToBase64(audioBlob);
@@ -347,7 +353,7 @@ export default function App() {
         else mimeType = 'audio/webm';
       }
 
-      setAnalysisStatus(`Gemini đang gỡ băng và soạn theo phong cách ${currentAi.name}...`);
+      setAnalysisStatus(`${processingProvider.name} đang gỡ băng — phong cách ${currentAssistant.name}...`);
 
       const data = await analyzeAudioWithGemini({
         apiKey: geminiKey,
@@ -357,7 +363,7 @@ export default function App() {
         aiAssistant: selectedAi,
       });
 
-      setAnalysisStatus(`Đang hoàn thiện biên bản theo phong cách ${currentAi.name}...`);
+      setAnalysisStatus(`Đang hoàn thiện biên bản — phong cách ${currentAssistant.name}...`);
 
       if (data.segments && Array.isArray(data.segments)) {
         setSegments(data.segments);
@@ -376,7 +382,7 @@ export default function App() {
       setActiveTab('document');
     } catch (err: any) {
       console.error('Lỗi khi phân tích âm thanh:', err);
-      setRecordError(`Lỗi xử lý: ${err.message || 'Không thể hoàn tất phân tích.'}`);
+      setRecordError(`${processingProvider.name} — phong cách ${currentAssistant.name}: ${err.message || 'Không thể hoàn tất phân tích.'}`);
     } finally {
       setIsAnalyzing(false);
       setAnalysisStatus('');
@@ -660,7 +666,7 @@ Nơi nhận:
                 <div className="flex items-center gap-2">
                   <Bot className="w-5 h-5 text-[#0A1E60]" />
                   <label htmlFor="ai-assistant-select" className="font-bold text-sm sm:text-base text-[#0A1E60] uppercase">
-                    Lựa chọn phong cách soạn thảo biên bản
+                    Phong cách soạn thảo biên bản
                   </label>
                 </div>
 
@@ -668,6 +674,7 @@ Nơi nhận:
                   <select
                     id="ai-assistant-select"
                     value={selectedAi}
+                    disabled={isAnalyzing}
                     onChange={(e) => {
                       setSelectedAi(e.target.value as AiAssistantOption['id']);
                       setShowKey(false);
@@ -688,34 +695,35 @@ Nơi nhận:
               <div className="bg-slate-50 p-2.5 rounded-md border border-slate-200 flex items-center justify-between text-xs text-slate-700">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-[#0A1E60]">
-                    Phong cách đang chọn: {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name} ({AI_ASSISTANTS.find((a) => a.id === selectedAi)?.provider})
+                    Phong cách: {currentAssistant.name} · Xử lý: {processingProvider.name}
                   </span>
                   <span className="text-slate-400">|</span>
                   <span className="text-slate-600 hidden sm:inline">
-                    {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.description}
+                    {currentAssistant.description}
                   </span>
                 </div>
                 <span className="font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] shrink-0">
-                  {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.badge}
+                  {currentAssistant.badge}
                 </span>
               </div>
 
               {/* Cấu hình AI thu gọn */}
               <details className="bg-slate-50 border border-slate-200 rounded-md p-3">
                 <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                  Cấu hình: {currentAssistant.name}
+                  Cấu hình phong cách {currentAssistant.name}
                 </summary>
                 <div className="mt-3 space-y-2">
                   <label htmlFor="gemini-key" className="block text-xs font-semibold text-slate-700">
-                    Khóa xử lý âm thanh — Google Gemini API
+                    {processingProvider.keyLabel}
                   </label>
                   <div className="flex gap-2">
                     <input
                       id="gemini-key"
                       type={showKey ? 'text' : 'password'}
                       value={geminiKey}
+                      disabled={isAnalyzing}
                       onChange={(e) => updateGeminiKey(e.target.value)}
-                      placeholder={`Nhập khóa Gemini để xử lý theo phong cách ${currentAssistant.name}`}
+                      placeholder={`Nhập khóa ${processingProvider.name} — phong cách ${currentAssistant.name}`}
                       autoComplete="off"
                       className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -728,9 +736,10 @@ Nơi nhận:
                     </button>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Phong cách đang chọn: {currentAssistant.name}. Bộ xử lý âm thanh hiện tại là Google Gemini,
-                    vì vậy ô này nhận khóa Gemini cho tất cả lựa chọn. Có thể để trống khi ghi âm hoặc tải bản ghi;
-                    cần khóa khi phân tích. Âm thanh được gửi tới Google khi xử lý.
+                    Phong cách: {currentAssistant.name}. Dịch vụ phân tích: {processingProvider.name}.
+                    Các lựa chọn ChatGPT, Claude và DeepSeek trong bản này là phong cách soạn thảo,
+                    chưa phải kết nối tới API của các hãng đó. Khi phân tích, âm thanh được gửi tới {processingProvider.destination}.
+                    Có thể ghi âm và tải bản ghi khi để trống key; tạo biên bản bằng AI cần key của {processingProvider.name}.
                   </p>
                 </div>
               </details>
@@ -857,12 +866,12 @@ Nơi nhận:
                       {isAnalyzing ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin text-yellow-300" />
-                          <span>Gemini đang soạn theo phong cách {currentAssistant.name}...</span>
+                          <span>{processingProvider.name} đang soạn — phong cách {currentAssistant.name}...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 text-yellow-300" />
-                          <span>Gỡ băng & Soạn theo phong cách {currentAssistant.name}</span>
+                          <span>Phân tích & Soạn biên bản — {currentAssistant.name}</span>
                         </>
                       )}
                     </button>
@@ -893,7 +902,7 @@ Nơi nhận:
                     <Clock className="w-8 h-8 text-slate-400 mx-auto" />
                     <p className="text-sm text-slate-600 font-medium">Chưa có dữ liệu lời thoại cuộc họp</p>
                     <p className="text-xs text-slate-400 max-w-md mx-auto">
-                      Hãy thu âm trực tiếp hoặc tải tệp âm thanh cuộc họp lên, chọn Trợ lý AI và bấm <strong>"Gỡ băng & Soạn thảo"</strong>.
+                      Hãy thu âm trực tiếp hoặc tải tệp âm thanh cuộc họp lên, chọn phong cách và bấm <strong>"Phân tích & Soạn biên bản"</strong>.
                     </p>
                   </div>
                 ) : (
@@ -1360,7 +1369,7 @@ Nơi nhận:
                 </div>
                 <h3 className="font-bold text-lg text-[#0A1E60]">Chưa có nội dung biên bản cuộc họp</h3>
                 <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để Trợ lý AI tự động soạn thảo biên bản thực tế.
+                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để {processingProvider.name} phân tích và soạn biên bản theo phong cách đã chọn.
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">

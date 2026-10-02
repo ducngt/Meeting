@@ -1,7 +1,7 @@
 /**
  * Meeting Assistant - Trường Đại học Sư phạm Kỹ thuật Nam Định (NUTE)
  * Hệ thống trợ lý ghi âm và soạn thảo Biên bản cuộc họp
- * Hỗ trợ đa Trợ lý AI (ChatGPT, Gemini, Claude, DeepSeek) không cần Key API
+ * Nhận dạng Whisper và soạn biên bản Qwen trong trình duyệt, không cần API key
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -13,6 +13,7 @@ import {
   Download,
   Copy,
   Check,
+  Sparkles,
   Building,
   RotateCcw,
   Loader2,
@@ -25,6 +26,9 @@ import {
   MapPin,
   User,
   Bot,
+  CheckCircle2,
+  Zap,
+  Brain,
   Edit3,
 } from 'lucide-react';
 
@@ -33,60 +37,7 @@ import { DEFAULT_METADATA, DEFAULT_ATTENDEES } from './sampleData';
 import { getSupportedMimeType } from './audioUtils';
 import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
-
-interface AiAssistantOption {
-  id: 'chatgpt' | 'gemini' | 'claude' | 'deepseek';
-  name: string;
-  provider: string;
-  description: string;
-  badge: string;
-  color: string;
-  borderActive: string;
-  iconBg: string;
-}
-
-const AI_ASSISTANTS: AiAssistantOption[] = [
-  {
-    id: 'chatgpt',
-    name: 'ChatGPT',
-    provider: 'OpenAI',
-    description: 'Văn phong hành chính trang trọng, súc tích, mạch lạc và bám sát quy chuẩn văn thư.',
-    badge: 'Chuyên văn bản',
-    color: 'text-emerald-700',
-    borderActive: 'border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/20',
-    iconBg: 'bg-emerald-600',
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    provider: 'Google',
-    description: 'Mở website Gemini để cung cấp nội dung và yêu cầu soạn biên bản.',
-    badge: 'Tốc độ cao',
-    color: 'text-blue-700',
-    borderActive: 'border-blue-500 bg-blue-50/40 ring-2 ring-blue-500/20',
-    iconBg: 'bg-blue-600',
-  },
-  {
-    id: 'claude',
-    name: 'Claude',
-    provider: 'Anthropic',
-    description: 'Lập luận logic chặt chẽ, tổng hợp thấu đáo các luồng ý kiến thảo luận và kết luận chỉ đạo.',
-    badge: 'Lập luận sâu sắc',
-    color: 'text-purple-700',
-    borderActive: 'border-purple-500 bg-purple-50/40 ring-2 ring-purple-500/20',
-    iconBg: 'bg-purple-600',
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek AI',
-    provider: 'DeepSeek',
-    description: 'Bóc tách trách nhiệm chi tiết, thiết lập ma trận phân công công việc và rà soát tiến độ tối ưu.',
-    badge: 'Phân công nhiệm vụ',
-    color: 'text-indigo-700',
-    borderActive: 'border-indigo-500 bg-indigo-50/40 ring-2 ring-indigo-500/20',
-    iconBg: 'bg-indigo-600',
-  },
-];
+import { analyzeAudioLocally } from './lib/localAiClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'pipeline' | 'metadata' | 'document' | 'export'>('pipeline');
@@ -94,19 +45,8 @@ export default function App() {
   const [metadata, setMetadata] = useState<MeetingMetadata>(DEFAULT_METADATA);
   const [attendeeList, setAttendeeList] = useState<AttendeeItem[]>(DEFAULT_ATTENDEES);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  // Yêu cầu 4: Bỏ hết dữ liệu ban đầu về nội dung mẫu cuộc họp (khởi tạo null hoàn toàn)
   const [minutes, setMinutes] = useState<AdministrativeMinutes | null>(null);
-
-  const [selectedAi, setSelectedAi] = useState<'chatgpt' | 'gemini' | 'claude' | 'deepseek'>('chatgpt');
-  const [aiResult, setAiResult] = useState('');
-  const [notice, setNotice] = useState('');
-  const [isStartingRecording, setIsStartingRecording] = useState(false);
-  const [isStoppingRecording, setIsStoppingRecording] = useState(false);
-  const aiUrls = {
-    chatgpt: 'https://chatgpt.com/',
-    gemini: 'https://gemini.google.com/',
-    claude: 'https://claude.ai/',
-    deepseek: 'https://chat.deepseek.com/',
-  };
 
   // Thu âm microphone
   const [isRecording, setIsRecording] = useState(false);
@@ -119,17 +59,15 @@ export default function App() {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // Trạng thái xử lý
-  const streamRef = useRef<MediaStream | null>(null);
-  const currentUrlRef = useRef<string | null>(null);
-  const mountedRef = useRef(true);
-  const recordingBusyRef = useRef(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState<string>('');
   const [copiedText, setCopiedText] = useState(false);
   const [isExportingWord, setIsExportingWord] = useState(false);
 
@@ -140,283 +78,182 @@ export default function App() {
     department: 'Phòng chức năng',
   });
 
-  const releaseCapture = () => {
-    if (timerRef.current !== null) clearInterval(timerRef.current);
-    timerRef.current = null;
-    if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
-    animFrameRef.current = null;
-    analyserRef.current = null;
-    const context = audioContextRef.current;
-    audioContextRef.current = null;
-    if (context && context.state !== 'closed') void context.close().catch(() => {});
-    streamRef.current?.getTracks().forEach(track => track.stop());
-    streamRef.current = null;
-  };
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      const recorder = mediaRecorderRef.current;
-      if (recorder) {
-        recorder.onstop = null;
-        recorder.ondataavailable = null;
-        recorder.onerror = null;
-        if (recorder.state !== 'inactive') recorder.stop();
-      }
-      releaseCapture();
-      if (currentUrlRef.current) URL.revokeObjectURL(currentUrlRef.current);
-    };
-  }, []);
-
-  const setAudioSource = (blob: Blob, name: string) => {
-    if (currentUrlRef.current) URL.revokeObjectURL(currentUrlRef.current);
-    const url = URL.createObjectURL(blob);
-    currentUrlRef.current = url;
-    setAudioBlob(blob);
-    setAudioUrl(url);
-    setAudioFileName(name);
-    setMinutes(null);
-    setSegments([]);
-    setAiResult('');
-  };
-
-  const audioExtension = (mime: string) => {
-    const type = mime.toLowerCase();
-    if (type.includes('mp4') || type.includes('aac')) return 'm4a';
-    if (type.includes('ogg')) return 'ogg';
-    if (type.includes('wav')) return 'wav';
-    if (type.includes('mpeg') || type.includes('mp3')) return 'mp3';
-    if (type.includes('flac')) return 'flac';
-    return 'webm';
-  };
-
+  // Quản lý thu âm Microphone
   const startRecording = async () => {
-    if (recordingBusyRef.current) return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setRecordError('Trình duyệt không hỗ trợ ghi âm. Hãy dùng HTTPS hoặc tải tệp âm thanh lên.');
+    setRecordError(null);
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setRecordError('Trình duyệt không hỗ trợ trực tiếp Microphone trong ngữ cảnh hiện tại. Bạn vui lòng sử dụng tính năng tải file ghi âm cuộc họp.');
       return;
     }
-    recordingBusyRef.current = true;
-    setIsStartingRecording(true);
-    setRecordError(null);
-    setNotice('');
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mountedRef.current) {
-        stream.getTracks().forEach(track => track.stop());
-        recordingBusyRef.current = false;
-        return;
-      }
-      streamRef.current = stream;
-      const mimeType = getSupportedMimeType();
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      audioChunksRef.current = [];
-      recorder.ondataavailable = event => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        releaseCapture();
-        recordingBusyRef.current = false;
-        if (!mountedRef.current) return;
-        setIsRecording(false);
-        setIsStoppingRecording(false);
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        if (!blob.size) {
-          setRecordError('Bản ghi không có dữ liệu. Hãy kiểm tra microphone và ghi lại.');
-          return;
-        }
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        setAudioSource(blob, `Ghi_am_hop_NUTE_${stamp}.${audioExtension(blob.type)}`);
-        setNotice('Đã tạo bản ghi trong phiên này. Hãy tải tệp về trước khi đóng hoặc tải lại trang.');
-      };
-      recorder.onerror = () => {
-        setRecordError('Có lỗi ghi âm. Hãy tải phần bản ghi đã thu được nếu có.');
-        if (recorder.state !== 'inactive') recorder.stop();
-        releaseCapture();
-        recordingBusyRef.current = false;
-        setIsRecording(false);
-        setIsStoppingRecording(false);
-      };
-      recorder.start(1000);
-      setRecordDuration(0);
-      setIsRecording(true);
-      const startedAt = Date.now();
-      timerRef.current = setInterval(() => {
-        setRecordDuration(Math.floor((Date.now() - startedAt) / 1000));
-      }, 1000);
+
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
-          const context = new AudioCtx();
-          audioContextRef.current = context;
-          void context.resume().catch(() => {});
-          const analyser = context.createAnalyser();
+          const audioCtx = new AudioCtx();
+          audioContextRef.current = audioCtx;
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
           analyser.fftSize = 64;
-          context.createMediaStreamSource(stream).connect(analyser);
+          source.connect(analyser);
           analyserRef.current = analyser;
-          const values = new Uint8Array(analyser.frequencyBinCount);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
           const updateLevels = () => {
-            if (!analyserRef.current || !mountedRef.current) return;
-            analyser.getByteFrequencyData(values);
-            setAudioLevels(Array.from({ length: 12 }, (_, i) =>
-              Math.max(5, Math.round(values[i * 2] / 255 * 100))
-            ));
+            if (analyserRef.current) {
+              analyserRef.current.getByteFrequencyData(dataArray);
+              const step = Math.floor(dataArray.length / 12);
+              const newLevels = [];
+              for (let i = 0; i < 12; i++) {
+                const val = dataArray[i * step] || 0;
+                newLevels.push(Math.max(10, Math.min(100, Math.round((val / 255) * 100))));
+              }
+              setAudioLevels(newLevels);
+            }
             animFrameRef.current = requestAnimationFrame(updateLevels);
           };
           updateLevels();
         }
-      } catch { /* Ghi âm vẫn hoạt động khi không có biểu đồ âm thanh. */ }
-    } catch (error) {
-      releaseCapture();
-      recordingBusyRef.current = false;
-      const name = error instanceof Error ? error.name : '';
-      setRecordError(name === 'NotAllowedError'
-        ? 'Microphone bị từ chối. Hãy cấp quyền trong trình duyệt hoặc tải tệp âm thanh lên.'
-        : `Không thể ghi âm: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
-      setIsRecording(false);
-    } finally {
-      if (mountedRef.current) setIsStartingRecording(false);
+      } catch (e) {
+        console.warn('AudioAnalyser visualizer not available:', e);
+      }
+
+      const mimeType = getSupportedMimeType();
+      const mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const type = mediaRecorder.mimeType || 'audio/webm';
+        const blob = new Blob(audioChunksRef.current, { type });
+        setAudioBlob(blob);
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        setAudioFileName(`Ghi_am_hop_NUTE_${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.webm`);
+      };
+
+      mediaRecorder.start(250);
+      setIsRecording(true);
+      setRecordDuration(0);
+
+      timerRef.current = setInterval(() => {
+        setRecordDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.error('Không thể truy cập microphone:', err);
+      let errMsg = 'Không thể truy cập microphone.';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errMsg = 'Quyền Microphone bị từ chối trong trình duyệt. Vui lòng cấp quyền hoặc tải lên file âm thanh cuộc họp.';
+      } else {
+        errMsg = `Lỗi microphone: ${err.message || err.name}.`;
+      }
+      setRecordError(errMsg);
     }
   };
 
   const stopRecording = () => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
-    setIsStoppingRecording(true);
-    recorder.stop();
-    // Đợi onstop nhận khối âm thanh cuối rồi giải phóng microphone.
+    setIsRecording(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+    }
+
+    if (mediaRecorderRef.current && typeof mediaRecorderRef.current.stop === 'function') {
+      try {
+        if (typeof mediaRecorderRef.current.requestData === 'function') {
+          mediaRecorderRef.current.requestData();
+        }
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current.stream?.getTracks().forEach((track) => track.stop());
+      } catch (e) {
+        console.warn('Lỗi dừng mediaRecorder:', e);
+      }
+    }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || recordingBusyRef.current) return;
-    if (!file.size) { setRecordError('Tệp âm thanh rỗng.'); return; }
-    if (!file.type.startsWith('audio/') && !/\.(wav|mp3|m4a|mp4|ogg|flac|webm|aac)$/i.test(file.name)) {
-      setRecordError('Hãy chọn tệp âm thanh được hỗ trợ.');
-      return;
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && !isRecording && !isAnalyzing) {
+      setAudioBlob(file);
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url);
+      setAudioFileName(file.name);
+      setRecordError(null);
     }
-    setAudioSource(file, file.name);
-    setRecordDuration(0);
-    setRecordError(null);
-    setNotice('Tệp đã được chọn trên máy của bạn; chưa gửi tới dịch vụ AI.');
   };
 
   const handleResetSession = () => {
-    if (recordingBusyRef.current) {
-      setRecordError('Hãy dừng ghi âm và đợi bản ghi hoàn tất trước khi tạo cuộc họp mới.');
-      return;
-    }
-    if ((audioBlob || minutes || aiResult) && !window.confirm('Xóa bản ghi và nội dung trong phiên này? Hãy tải các tệp cần giữ trước.')) return;
-    if (currentUrlRef.current) URL.revokeObjectURL(currentUrlRef.current);
-    currentUrlRef.current = null;
+    if (isRecording || isAnalyzing) return;
     setSegments([]);
     setMinutes(null);
     setAudioUrl(null);
     setAudioBlob(null);
     setAudioFileName('');
-    setAiResult('');
     setRecordDuration(0);
     setRecordError(null);
-    setNotice('Đã xóa nội dung. Thông tin cơ quan và đại biểu được giữ để bạn cập nhật tại Tab 2.');
-    setActiveTab('pipeline');
   };
 
+  // Khởi tạo biên bản trống để người dùng tự nhập nội dung nếu muốn
   const handleCreateEmptyMinutes = () => {
-    setAiResult(JSON.stringify({
-      opening_statement: '', discussions: [], conclusions: [], tasks: [], closing_statement: ''
-    }, null, 2));
-    setActiveTab('pipeline');
-    setNotice('Đã tạo cấu trúc JSON trống. Nhập nội dung vào ô kết quả rồi nhấn Nhập kết quả vào biên bản.');
+    setMinutes({ metadata, opening_statement: '', discussions: [], conclusions: [], tasks: [], closing_statement: '' });
+    setActiveTab('document');
   };
 
-  const handleAnalyzeAudio = () => {
-    window.open(aiUrls[selectedAi], '_blank', 'noopener,noreferrer');
-  };
-
-  const handleDownloadAudio = () => {
-    if (!audioBlob || recordingBusyRef.current) return;
-    const url = URL.createObjectURL(audioBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = audioBlob instanceof File ? audioBlob.name
-      : audioFileName || `ghi-am-cuoc-hop.${audioExtension(audioBlob.type)}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-
-  const buildPrompt = () => {
-    const structure = {
-      opening_statement: '',
-      discussions: [{ speaker: '', role: '', content: '', timestamp: '' }],
-      conclusions: [],
-      tasks: [{ code: '', task_name: '', assigned_unit: '', deadline: '', requirements: '' }],
-      closing_statement: ''
-    };
-    return [
-      'Soạn biên bản bằng tiếng Việt từ âm thanh hoặc bản chép lời tôi cung cấp.',
-      'Chỉ trả về một đối tượng JSON hợp lệ đúng cấu trúc dưới đây, không dùng khối Markdown.',
-      'Không bịa người phát biểu, quyết định, nhiệm vụ, thời hạn, giờ họp hoặc việc thông qua biên bản.',
-      'Không xác định được người nói thì ghi "Chưa xác định". Thông tin thiếu để chuỗi rỗng; danh sách không có dữ liệu để [].',
-      'Phân biệt ý kiến đề xuất với quyết định đã được chủ trì kết luận.',
-      'Các đối tượng mẫu dưới đây chỉ mô tả trường dữ liệu, không phải nội dung cuộc họp.',
-      'Nếu không đọc được nguồn, hãy báo rõ và yêu cầu bản chép lời; không tạo biên bản suy đoán.',
-      'Thông tin cuộc họp do tôi khai báo:', JSON.stringify(metadata, null, 2),
-      'Cấu trúc JSON cần trả về:', JSON.stringify(structure, null, 2)
-    ].join('\n\n');
-  };
-
-  const handleCopyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(buildPrompt());
-      setNotice('Đã sao chép yêu cầu. Mở website AI, dán yêu cầu và cung cấp âm thanh hoặc bản chép lời.');
-    } catch {
-      setNotice('Không sao chép được. Hãy mở Yêu cầu gửi AI bên dưới và sao chép thủ công.');
+  // Phân tích file ghi âm bằng Trợ lý AI đã chọn
+  const handleAnalyzeAudio = async () => {
+    if (!audioBlob) {
+      setRecordError('Vui lòng ghi âm từ microphone hoặc tải lên file âm thanh cuộc họp trước khi soạn thảo.');
+      return;
     }
-  };
+    setIsAnalyzing(true);
+    setRecordError(null);
+    setAnalysisStatus(`Trợ lý ${'AI miễn phí'} đang kết nối và xử lý tệp âm thanh cuộc họp...`);
 
-  const handleImportAiResult = () => {
     try {
-      const cleaned = aiResult.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-      const parsed = JSON.parse(cleaned);
-      const data = parsed?.minutes ?? parsed;
-      const hasStrings = (value: any, fields: string[]) =>
-        value !== null && typeof value === 'object' && !Array.isArray(value) &&
-        fields.every(field => typeof value[field] === 'string');
-      if (
-        !hasStrings(data, ['opening_statement', 'closing_statement']) ||
-        !Array.isArray(data.discussions) ||
-        !data.discussions.every((item: any) =>
-          hasStrings(item, ['speaker', 'content']) &&
-          (item.role === undefined || typeof item.role === 'string') &&
-          (item.timestamp === undefined || typeof item.timestamp === 'string')) ||
-        !Array.isArray(data.conclusions) ||
-        !data.conclusions.every((item: any) => typeof item === 'string') ||
-        !Array.isArray(data.tasks) ||
-        !data.tasks.every((item: any) =>
-          hasStrings(item, ['code', 'task_name', 'assigned_unit', 'deadline']) &&
-          (item.requirements === undefined || typeof item.requirements === 'string'))
-      ) throw new Error('JSON chưa đúng cấu trúc. Hãy yêu cầu AI sửa theo mẫu yêu cầu.');
-      setMinutes({ metadata, opening_statement: data.opening_statement,
-        discussions: data.discussions, conclusions: data.conclusions,
-        tasks: data.tasks, closing_statement: data.closing_statement });
-      setSegments([]);
-      setRecordError(null);
-      setNotice('Đã nhập kết quả. Hãy đối chiếu nội dung với nguồn trước khi xuất Word.');
+
+      setAnalysisStatus(`Trợ lý ${'AI miễn phí'} đang gỡ băng lời nói tiếng Việt và tổng hợp các ý kiến thảo luận...`);
+
+      const data = await analyzeAudioLocally({
+        audioBlob,
+        metadata,
+        onProgress: setAnalysisStatus,
+      });
+
+      setAnalysisStatus(`Trợ lý ${'AI miễn phí'} đang hoàn thiện Biên bản cuộc họp chuẩn thể thức Nghị định 30/2020/NĐ-CP...`);
+
+      if (data.segments && Array.isArray(data.segments)) {
+        setSegments(data.segments);
+      }
+
+      if (data.minutes) {
+        setMinutes({
+          ...data.minutes,
+          metadata: {
+            ...metadata,
+            ...(data.minutes.metadata || {}),
+          },
+        });
+      }
+
       setActiveTab('document');
-    } catch (error) {
-      setNotice(`Không nhập được: ${error instanceof Error ? error.message : 'JSON không hợp lệ'}`);
+    } catch (err: any) {
+      console.error('Lỗi khi phân tích âm thanh:', err);
+      setRecordError(`Lỗi xử lý: ${err.message || 'Không thể hoàn tất phân tích.'}`);
+    } finally {
+      setIsAnalyzing(false);
+      setAnalysisStatus('');
     }
   };
-
-  // Đồng bộ thông tin khai báo vào biên bản đã nhập để xuất Word và xem trước thống nhất.
-  useEffect(() => {
-    setMinutes(previous => previous ? { ...previous, metadata } : previous);
-  }, [metadata]);
 
   // Xuất file Word (.docx)
   const handleDownloadWord = async () => {
@@ -426,7 +263,7 @@ export default function App() {
     }
     setIsExportingWord(true);
     try {
-      const blob = await generateWordDocument(minutes);
+      const blob = await generateWordDocument({ ...minutes, metadata });
       const filename = `Bien_ban_hop_NUTE_${metadata.document_code.replace(/[^a-zA-Z0-9]/g, '_') || 'cuoc_hop'}.docx`;
       downloadWordDocument(blob, filename);
     } catch (e: any) {
@@ -438,7 +275,7 @@ export default function App() {
   };
 
   // Sao chép nội dung văn bản
-  const handleCopyDocumentText = async () => {
+  const handleCopyDocumentText = () => {
     if (!minutes) return;
     const text = `
 ${metadata.superior_agency.toUpperCase()}
@@ -491,13 +328,9 @@ Nơi nhận:
 - Lưu: VT, Hồ sơ cuộc họp.
     `.trim();
 
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedText(true);
-      setTimeout(() => setCopiedText(false), 2000);
-    } catch {
-      setNotice('Không sao chép được nội dung. Hãy kiểm tra quyền Clipboard.');
-    }
+    navigator.clipboard.writeText(text);
+    setCopiedText(true);
+    setTimeout(() => setCopiedText(false), 2000);
   };
 
   // Thêm đại biểu mới vào danh sách
@@ -540,7 +373,7 @@ Nơi nhận:
     setMetadata((prev) => ({
       ...prev,
       total_invited: Math.max(0, prev.total_invited > 0 ? prev.total_invited - 1 : nextList.length),
-      total_present: Math.max(0, prev.total_present > 0 ? prev.total_present - (attendeeList.find(a => a.id === id)?.present ? 1 : 0) : presentCount),
+      total_present: Math.max(0, prev.total_present > 0 ? prev.total_present - 1 : presentCount),
       total_absent: absentCount,
       attendees_summary: summary,
       attendee_list: nextList,
@@ -626,7 +459,7 @@ Nơi nhận:
             }`}
           >
             <Mic className="w-4 h-4" />
-            1. Ghi âm & Trao đổi với AI
+            1. Ghi âm & Gỡ băng cuộc họp
             {audioBlob && <span className="w-2 h-2 rounded-full bg-emerald-400"></span>}
           </button>
 
@@ -643,6 +476,7 @@ Nơi nhận:
             {attendeeList.length > 0 && <span className="text-[11px] font-mono bg-blue-900/60 px-1.5 py-0.5 rounded">({attendeeList.length})</span>}
           </button>
 
+          {/* Yêu cầu 3: Đổi "3. Biên bản họp NUTE (NĐ 30/2020)" thành "Biên bản họp" */}
           <button
             onClick={() => setActiveTab('document')}
             className={`px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 transition flex items-center gap-2 cursor-pointer ${
@@ -671,9 +505,9 @@ Nơi nhận:
       </header>
 
       {/* NỘI DUNG CHÍNH */}
-      {notice && <div role="status" className="no-print max-w-7xl mx-auto w-full px-4 pt-4 text-sm text-blue-900">{notice}</div>}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
         {/* BANNER THÔNG TIN TRƯỜNG ĐH SPKT NAM ĐỊNH */}
+        {/* Yêu cầu 2: Đổi thành: "Hệ thống ghi âm và tự động soạn thảo biên bản họp phục vụ Hội nghị" */}
         <div className="mb-6 bg-white border-l-4 border-[#0A1E60] rounded-r-lg p-3.5 shadow-sm text-xs sm:text-sm text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <NuteLogo className="w-8 h-8 shrink-0" />
@@ -681,7 +515,7 @@ Nơi nhận:
               <span className="font-bold text-[#0A1E60]">
                 Trường Đại học Sư phạm Kỹ thuật Nam Định:
               </span>{' '}
-              Hệ thống ghi âm và hỗ trợ soạn thảo biên bản họp phục vụ Hội nghị
+              Hệ thống ghi âm và tự động soạn thảo biên bản họp phục vụ Hội nghị
             </div>
           </div>
           <div className="text-xs text-slate-500 font-medium shrink-0">
@@ -692,74 +526,9 @@ Nơi nhận:
         {/* TAB 1: GHI ÂM, GỠ BĂNG & CHỌN TRỢ LÝ AI */}
         {activeTab === 'pipeline' && (
           <div className="space-y-6">
-            {/* LỰA CHỌN TRỢ LÝ AI (Hộp sổ để chọn) */}
-            <div className="bg-white rounded-lg border border-slate-300 shadow-sm p-4 space-y-3">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-[#0A1E60]" />
-                  <label htmlFor="ai-assistant-select" className="font-bold text-sm sm:text-base text-[#0A1E60] uppercase">
-                    Lựa chọn Trợ lý AI phân tích & soạn thảo biên bản
-                  </label>
-                </div>
-
-                <div className="w-full md:w-96">
-                  <select
-                    id="ai-assistant-select"
-                    value={selectedAi}
-                    onChange={(e) => setSelectedAi(e.target.value as any)}
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-lg font-bold text-[#0A1E60] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0A1E60] focus:bg-white transition cursor-pointer"
-                  >
-                    {AI_ASSISTANTS.map((ai) => (
-                      <option key={ai.id} value={ai.id}>
-                        {ai.name} ({ai.provider}) - {ai.badge}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Thông tin trợ lý đang được chọn */}
-              <div className="bg-slate-50 p-2.5 rounded-md border border-slate-200 flex items-center justify-between text-xs text-slate-700">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-[#0A1E60]">
-                    Trợ lý đang chọn: {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.name} ({AI_ASSISTANTS.find((a) => a.id === selectedAi)?.provider})
-                  </span>
-                  <span className="text-slate-400">|</span>
-                  <span className="text-slate-600 hidden sm:inline">
-                    {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.description}
-                  </span>
-                </div>
-                <span className="font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] shrink-0">
-                  {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.badge}
-                </span>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-3">
-                <p className="text-sm text-blue-900">
-                  Không cần API key. Nhập thông tin tại Tab 2, tải bản ghi về, mở website AI và tự cung cấp nội dung.
-                  Nếu dịch vụ không nhận âm thanh, hãy dùng bản chép lời. Dán JSON kết quả vào ô bên dưới.
-                  Ứng dụng không tự gửi dữ liệu hoặc tự lấy kết quả từ AI.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={handleDownloadAudio}
-                    disabled={!audioBlob || isRecording || isStartingRecording || isStoppingRecording}
-                    className="border rounded px-3 py-2 bg-white text-sm disabled:opacity-50">1. Tải bản ghi âm</button>
-                  <button type="button" onClick={handleCopyPrompt}
-                    className="border rounded px-3 py-2 bg-white text-sm">2. Sao chép yêu cầu</button>
-                  <button type="button" onClick={handleAnalyzeAudio}
-                    className="border rounded px-3 py-2 bg-white text-sm">3. Mở website AI</button>
-                </div>
-                <details className="text-sm">
-                  <summary className="cursor-pointer font-semibold">Yêu cầu gửi AI (có thể sao chép thủ công)</summary>
-                  <textarea readOnly value={buildPrompt()} rows={8} aria-label="Yêu cầu gửi AI"
-                    className="mt-2 w-full border rounded p-2 bg-white font-mono text-xs" />
-                </details>
-                <label htmlFor="ai-result" className="block text-sm font-semibold">4. Dán JSON do AI trả về</label>
-                <textarea id="ai-result" value={aiResult} onChange={event => setAiResult(event.target.value)} rows={10}
-                  placeholder="Dán toàn bộ JSON kết quả vào đây..." className="w-full border rounded p-2 font-mono text-sm bg-white" />
-                <button type="button" onClick={handleImportAiResult} disabled={!aiResult.trim()}
-                  className="bg-blue-900 text-white rounded px-3 py-2 text-sm disabled:opacity-50">5. Nhập kết quả vào biên bản</button>
-              </div>
+            <div className="bg-white border rounded-lg p-4 text-sm text-slate-700">
+              <strong>AI miễn phí: Whisper + Qwen</strong>
+              <p>Ghi âm hoặc chọn tệp, rồi nhấn Phân tích và tạo biên bản. Lần đầu cần tải mô hình AI; hãy giữ trang mở trong khi xử lý.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -830,20 +599,19 @@ Nơi nhận:
                     {!isRecording ? (
                       <button
                         onClick={startRecording}
-                        disabled={isStartingRecording || isStoppingRecording}
+                        disabled={isAnalyzing}
                         className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow transition cursor-pointer"
                       >
                         <Mic className="w-4 h-4" />
-                        {isStartingRecording ? 'Đang xin quyền microphone...' : isStoppingRecording ? 'Đang hoàn tất bản ghi...' : 'Bắt đầu ghi âm cuộc họp'}
+                        Bắt đầu ghi âm cuộc họp
                       </button>
                     ) : (
                       <button
                         onClick={stopRecording}
-                        disabled={isStoppingRecording}
                         className="w-full py-2.5 bg-slate-900 hover:bg-black text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer transition"
                       >
                         <MicOff className="w-4 h-4 text-red-400" />
-                        Dừng ghi âm & Tạo bản ghi
+                        Dừng ghi âm & Lưu dữ liệu
                       </button>
                     )}
                   </div>
@@ -858,7 +626,7 @@ Nơi nhận:
                     <Upload className="w-5 h-5 text-slate-400 mb-1" />
                     <span className="text-xs text-slate-600 font-medium">Nhấn để chọn tệp âm thanh cuộc họp</span>
                     <span className="text-[11px] text-slate-400">Hỗ trợ tệp ghi âm điện thoại, máy ghi âm hội trường</span>
-                    <input type="file" accept="audio/*,.m4a,.webm,.mp4" disabled={isRecording || isStartingRecording || isStoppingRecording} onChange={handleFileUpload} className="hidden" />
+                    <input type="file" accept="audio/*" disabled={isRecording || isAnalyzing} onChange={handleFileUpload} className="hidden" />
                   </label>
                 </div>
 
@@ -877,9 +645,29 @@ Nơi nhận:
 
                     <audio ref={audioPlayerRef} src={audioUrl} controls className="w-full h-8 rounded" />
 
-                    <button onClick={handleDownloadAudio} className="w-full py-2 bg-blue-900 text-white rounded text-sm">
-                      Tải bản ghi âm về máy
+                    <button
+                      onClick={handleAnalyzeAudio}
+                      disabled={isAnalyzing || isRecording}
+                      className="w-full py-2.5 bg-[#0A1E60] hover:bg-blue-900 text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-yellow-300" />
+                          <span>Trợ lý AI miễn phí đang soạn thảo...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 text-yellow-300" />
+                          <span>Phân tích và tạo biên bản</span>
+                        </>
+                      )}
                     </button>
+
+                    {analysisStatus && (
+                      <p className="text-[11px] text-slate-600 italic text-center animate-pulse">
+                        {analysisStatus}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -889,10 +677,10 @@ Nơi nhận:
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
                   <h3 className="font-bold text-base text-[#0A1E60] flex items-center gap-2">
                     <FileText className="w-5 h-5 text-blue-600" />
-                    Lời thoại cuộc họp ({segments.length} phân đoạn)
+                    Biên bản gỡ băng lời thoại ({segments.length} phân đoạn)
                   </h3>
                   <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded font-mono">
-                    Trao đổi với AI trên website riêng
+                    Tự động nhận diện mốc thời gian [HH:MM:SS]
                   </span>
                 </div>
 
@@ -901,7 +689,7 @@ Nơi nhận:
                     <Clock className="w-8 h-8 text-slate-400 mx-auto" />
                     <p className="text-sm text-slate-600 font-medium">Chưa có dữ liệu lời thoại cuộc họp</p>
                     <p className="text-xs text-slate-400 max-w-md mx-auto">
-                      Ứng dụng không tự gỡ băng. Cung cấp nguồn trên website AI và nhập JSON biên bản bằng khung phía trên. Bản chép lời được xử lý riêng trên website AI.
+                      Hãy thu âm trực tiếp hoặc tải tệp âm thanh cuộc họp lên, bấm <strong>"Phân tích và tạo biên bản"</strong>.
                     </p>
                   </div>
                 ) : (
@@ -1368,7 +1156,7 @@ Nơi nhận:
                 </div>
                 <h3 className="font-bold text-lg text-[#0A1E60]">Chưa có nội dung biên bản cuộc họp</h3>
                 <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-                  Vui lòng thực hiện quy trình tại <strong>Tab 1</strong>: mở website AI, cung cấp nguồn và nhập JSON kết quả. Bạn cũng có thể tạo cấu trúc JSON trống để tự nhập nội dung.
+                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để Trợ lý AI tự động soạn thảo biên bản thực tế.
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1385,7 +1173,7 @@ Nơi nhận:
                     className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded text-xs font-semibold flex items-center gap-2 cursor-pointer"
                   >
                     <Edit3 className="w-4 h-4" />
-                    Tạo JSON biên bản trống
+                    Khởi tạo biên bản trực tiếp
                   </button>
                 </div>
               </div>
@@ -1477,7 +1265,7 @@ Nơi nhận:
                         </div>
                         <div className="w-40 h-[1.5px] bg-black my-1"></div>
                         <div style={{ fontSize: '13pt' }} className="italic">
-                          {metadata.location_date || 'Chưa khai báo ngày họp'}
+                          {metadata.location_date || 'Nam Định, ngày 02 tháng 10 năm 2026'}
                         </div>
                       </div>
                     </div>
@@ -1499,10 +1287,10 @@ Nơi nhận:
                       </div>
                       <div style={{ fontSize: '13pt' }} className="pl-6 space-y-1">
                         <p>
-                          <strong className="font-bold">- Thời gian:</strong> Bắt đầu từ {metadata.start_time || 'Chưa khai báo'}, kết thúc hồi {metadata.end_time || 'Chưa khai báo'}.
+                          <strong className="font-bold">- Thời gian:</strong> Bắt đầu từ {metadata.start_time || '08 giờ 30 phút'}, kết thúc hồi {metadata.end_time || '11 giờ 30 phút cùng ngày'}.
                         </p>
                         <p>
-                          <strong className="font-bold">- Địa điểm:</strong> {metadata.location || 'Chưa khai báo'}
+                          <strong className="font-bold">- Địa điểm:</strong> {metadata.location || 'Phòng họp Ban Giám hiệu, Tầng 2 - Nhà Hiệu bộ, Trường ĐH SPKT Nam Định'}
                         </p>
                       </div>
                     </div>

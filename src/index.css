@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@media print {
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  header,
+  nav,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  .print-page-a4 {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
+    padding: 20mm 15mm 20mm 30mm !important;
+    page-break-after: avoid !important;
+  }
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+}

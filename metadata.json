@@ -1,0 +1,8 @@
+{
+  "name": "Meeting Intelligence - Trợ lý Họp Hiệu trưởng",
+  "description": "Hệ thống soạn thảo Biên bản họp chuẩn Nghị định 30/2020/NĐ-CP về văn bản hành chính: Ghi âm, nhận dạng giọng nói tiếng Việt, tự động lập biên bản và xuất bản Word (.docx) hoàn toàn miễn phí.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

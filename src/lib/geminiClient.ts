@@ -1,21 +1,7 @@
-// Gọi trực tiếp Google Gemini từ trình duyệt (dùng cho bản GitHub Pages, không cần máy chủ).
-// Khóa API do người dùng tự nhập và chỉ lưu trong trình duyệt của họ.
+// Gọi Gemini qua Cloudflare Worker. Key chỉ nằm trong Secret của Worker.
 
-export function getSystemPrompt(aiEngine: string = 'gemini'): string {
-  let engineIntro = 'Bạn là Trợ lý AI chuyên trách soạn thảo Biên bản cuộc họp.';
-  if (aiEngine === 'chatgpt') {
-    engineIntro =
-      'Bạn hoạt động với phong cách và năng lực của ChatGPT (OpenAI GPT-4o), ưu tiên văn phong hành chính trang trọng, súc tích, mạch lạc và bám sát quy chuẩn văn thư.';
-  } else if (aiEngine === 'claude') {
-    engineIntro =
-      'Bạn hoạt động với phong cách và năng lực của Claude (Anthropic Claude 3.5), ưu tiên lập luận logic, phân tích thấu đáo các góc nhìn thảo luận và tổng hợp chỉ đạo chặt chẽ.';
-  } else if (aiEngine === 'deepseek') {
-    engineIntro =
-      'Bạn hoạt động với phong cách và năng lực của DeepSeek AI (R1/V3), ưu tiên bóc tách trách nhiệm, ma trận giao việc rõ ràng và rà soát các điểm trọng yếu.';
-  } else {
-    engineIntro =
-      'Bạn hoạt động với phong cách và năng lực của Google Gemini, tối ưu hóa nhận diện giọng nói đa phương thức và tổng hợp biên bản nhanh chóng, chuẩn xác.';
-  }
+export function getSystemPrompt(): string {
+  const engineIntro = 'Bạn là trợ lý Google Gemini chuyên gỡ băng tiếng Việt và soạn biên bản theo nguồn âm thanh.';
 
   return `${engineIntro}
 Nhiệm vụ của bạn là:
@@ -95,25 +81,20 @@ export function parseJSONSafely(text: string): any {
 }
 
 // Danh sách mô hình thử lần lượt nếu mô hình trước bị quá tải hoặc không tồn tại
-const CANDIDATE_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest'];
+const WORKER_URL = 'https://TEN-WORKER.TAI-KHOAN.workers.dev/analyze';
 
 // Gemini giới hạn ~20 MB cho toàn bộ yêu cầu gửi kèm dữ liệu âm thanh trực tiếp
 const MAX_BASE64_LENGTH = 19 * 1024 * 1024;
 
 export interface AnalyzeOptions {
-  apiKey: string;
   audioBase64: string;
   mimeType?: string;
   metadata?: any;
-  aiAssistant?: string;
 }
 
 export async function analyzeAudioWithGemini(opts: AnalyzeOptions): Promise<any> {
-  const { apiKey, audioBase64, mimeType, metadata, aiAssistant = 'gemini' } = opts;
+  const { audioBase64, mimeType, metadata } = opts;
 
-  if (!apiKey || !apiKey.trim()) {
-    throw new Error('Chưa nhập khóa Gemini API. Hãy dán khóa vào ô "Khóa Google Gemini API" phía trên.');
-  }
   if (!audioBase64) {
     throw new Error('Không có dữ liệu âm thanh cuộc họp để phân tích.');
   }
@@ -129,7 +110,7 @@ ${JSON.stringify(metadata || {}, null, 2)}
 Hãy nghe toàn bộ tệp âm thanh này, gỡ băng tiếng Việt trung thực và soạn thảo BIÊN BẢN CUỘC HỌP CHUẨN NGHỊ ĐỊNH 30/2020/NĐ-CP theo đúng định dạng JSON yêu cầu.`;
 
   const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: getSystemPrompt(aiAssistant) }] },
+    systemInstruction: { parts: [{ text: getSystemPrompt() }] },
     contents: [
       {
         role: 'user',
@@ -139,48 +120,27 @@ Hãy nghe toàn bộ tệp âm thanh này, gỡ băng tiếng Việt trung thự
     generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
   });
 
-  let lastError = 'Không rõ nguyên nhân.';
-
-  for (const model of CANDIDATE_MODELS) {
-    let res: Response;
-    try {
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
-        body,
-      });
-    } catch {
-      lastError = 'Không kết nối được tới Google. Hãy kiểm tra mạng rồi thử lại.';
-      continue;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      const text = (data?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('');
-      const parsed = text ? parseJSONSafely(text) : null;
-      if (parsed && parsed.minutes) {
-        parsed.ai_engine_used = aiAssistant;
-        return parsed;
-      }
-      lastError = 'AI trả về kết quả không đúng định dạng biên bản. Hãy thử lại.';
-      continue;
-    }
-
-    let msg = '';
-    try {
-      const j = await res.json();
-      msg = j?.error?.message ?? '';
-    } catch {
-      /* bỏ qua */
-    }
-
-    // Lỗi khóa API: dừng ngay, không thử mô hình khác
-    if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key/i.test(msg))) {
-      throw new Error(`Khóa Gemini API không hợp lệ hoặc không có quyền sử dụng. ${msg}`.trim());
-    }
-
-    lastError = `Mô hình ${model} lỗi ${res.status}${msg ? ': ' + msg : ''}`;
+  let res: Response;
+  try {
+    res = await fetch(WORKER_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body, signal: AbortSignal.timeout(190000)
+    });
+  } catch {
+    throw new Error('Không kết nối được máy chủ phân tích. Kiểm tra URL Worker, mạng hoặc thử bản ghi ngắn hơn.');
   }
-
-  throw new Error(lastError);
+  let data: any;
+  try { data = await res.json(); }
+  catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ.'); }
+  if (!res.ok) {
+    const message = data?.error?.message || `Lỗi máy chủ ${res.status}`;
+    if (res.status === 429) throw new Error('Dịch vụ AI dùng chung đã hết hạn mức tạm thời. Hãy thử lại sau.');
+    throw new Error(message);
+  }
+  const text = (data?.candidates?.[0]?.content?.parts || [])
+    .filter((part: any) => !part.thought).map((part: any) => part.text || '').join('');
+  const parsed = text ? parseJSONSafely(text) : null;
+  if (!parsed?.minutes) throw new Error('AI chưa trả về biên bản hợp lệ. Hãy thử bản ghi rõ hơn.');
+  parsed.ai_engine_used = 'gemini';
+  return parsed;
 }

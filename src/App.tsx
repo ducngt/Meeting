@@ -1,7 +1,7 @@
 /**
  * Meeting Assistant - Trường Đại học Sư phạm Kỹ thuật Nam Định (NUTE)
  * Hệ thống trợ lý ghi âm và soạn thảo Biên bản cuộc họp
- * Xử lý âm thanh bằng Gemini; lựa chọn phong cách soạn thảo trên giao diện
+ * Phân tích bằng Google Gemini qua Worker; key chỉ lưu ở máy chủ
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -25,10 +25,6 @@ import {
   Plus,
   MapPin,
   User,
-  Bot,
-  CheckCircle2,
-  Zap,
-  Brain,
   Edit3,
 } from 'lucide-react';
 
@@ -52,60 +48,6 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-interface AiAssistantOption {
-  id: 'chatgpt' | 'gemini' | 'claude' | 'deepseek';
-  name: string;
-  provider: string;
-  description: string;
-  badge: string;
-  color: string;
-  borderActive: string;
-  iconBg: string;
-}
-
-const AI_ASSISTANTS: AiAssistantOption[] = [
-  {
-    id: 'chatgpt',
-    name: 'ChatGPT',
-    provider: 'Phong cách văn bản',
-    description: 'Văn phong hành chính trang trọng, súc tích, mạch lạc và bám sát quy chuẩn văn thư.',
-    badge: 'Chuyên văn bản',
-    color: 'text-emerald-700',
-    borderActive: 'border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/20',
-    iconBg: 'bg-emerald-600',
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    provider: 'Xử lý bằng Gemini',
-    description: 'Gỡ băng và tổng hợp nội dung bằng Google Gemini.',
-    badge: 'Tốc độ cao',
-    color: 'text-blue-700',
-    borderActive: 'border-blue-500 bg-blue-50/40 ring-2 ring-blue-500/20',
-    iconBg: 'bg-blue-600',
-  },
-  {
-    id: 'claude',
-    name: 'Claude',
-    provider: 'Phong cách lập luận',
-    description: 'Lập luận logic chặt chẽ, tổng hợp thấu đáo các luồng ý kiến thảo luận và kết luận chỉ đạo.',
-    badge: 'Lập luận sâu sắc',
-    color: 'text-purple-700',
-    borderActive: 'border-purple-500 bg-purple-50/40 ring-2 ring-purple-500/20',
-    iconBg: 'bg-purple-600',
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek AI',
-    provider: 'Phong cách phân công',
-    description: 'Bóc tách trách nhiệm chi tiết, thiết lập ma trận phân công công việc và rà soát tiến độ tối ưu.',
-    badge: 'Phân công nhiệm vụ',
-    color: 'text-indigo-700',
-    borderActive: 'border-indigo-500 bg-indigo-50/40 ring-2 ring-indigo-500/20',
-    iconBg: 'bg-indigo-600',
-  },
-];
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<'pipeline' | 'metadata' | 'document' | 'export'>('pipeline');
 
@@ -114,33 +56,6 @@ export default function App() {
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   // Yêu cầu 4: Bỏ hết dữ liệu ban đầu về nội dung mẫu cuộc họp (khởi tạo null hoàn toàn)
   const [minutes, setMinutes] = useState<AdministrativeMinutes | null>(null);
-
-  // Lựa chọn phong cách soạn thảo; bộ xử lý hiện tại là Gemini
-  const [selectedAi, setSelectedAi] = useState<'chatgpt' | 'gemini' | 'claude' | 'deepseek'>('chatgpt');
-  const currentAssistant = AI_ASSISTANTS.find(ai => ai.id === selectedAi)!;
-  // Một nguồn duy nhất cho nhãn dịch vụ thực sự nhận dữ liệu.
-  const processingProvider = {
-    name: 'Google Gemini',
-    keyLabel: 'Khóa API Google Gemini',
-    destination: 'Google',
-  };
-  const [geminiKey, setGeminiKey] = useState<string>(() => {
-    try {
-      return localStorage.getItem('gemini_api_key') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [showKey, setShowKey] = useState(false);
-  const updateGeminiKey = (value: string) => {
-    setGeminiKey(value);
-    try {
-      if (value.trim()) localStorage.setItem('gemini_api_key', value.trim());
-      else localStorage.removeItem('gemini_api_key');
-    } catch {
-      /* trình duyệt chặn lưu trữ: bỏ qua */
-    }
-  };
 
   // Thu âm microphone
   const [isRecording, setIsRecording] = useState(false);
@@ -277,7 +192,7 @@ export default function App() {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file && !isRecording && !isAnalyzing) {
       setAudioBlob(file);
       const url = URL.createObjectURL(file);
       setAudioUrl(url);
@@ -287,6 +202,7 @@ export default function App() {
   };
 
   const handleResetSession = () => {
+    if (isRecording || isAnalyzing) return;
     setSegments([]);
     setMinutes(null);
     setAudioUrl(null);
@@ -298,29 +214,7 @@ export default function App() {
 
   // Khởi tạo biên bản trống để người dùng tự nhập nội dung nếu muốn
   const handleCreateEmptyMinutes = () => {
-    setMinutes({
-      metadata,
-      opening_statement: `Đồng chí ${metadata.chair_name} - ${metadata.chair_title} phát biểu khai mạc cuộc họp, quán triệt mục đích, yêu cầu và nội dung trọng tâm của chương trình làm việc.`,
-      discussions: [
-        {
-          speaker: metadata.chair_name,
-          role: metadata.chair_title,
-          content: 'Quán triệt các đơn vị tập trung triển khai các nhiệm vụ trọng tâm.',
-          timestamp: '00:00:10',
-        },
-      ],
-      conclusions: ['Thống nhất các nội dung đã thảo luận tại cuộc họp.'],
-      tasks: [
-        {
-          code: 'NV-01',
-          task_name: 'Hoàn thiện văn bản kết luận cuộc họp',
-          assigned_unit: 'Văn phòng Trường',
-          deadline: 'Trong vòng 02 ngày',
-          requirements: 'Trình Hiệu trưởng ký ban hành',
-        },
-      ],
-      closing_statement: `Biên bản này được lập xong vào hồi ${metadata.end_time || '11 giờ 30 phút cùng ngày'}, đã được đọc lại cho toàn thể thành viên tham dự nghe và nhất trí thông qua./.`,
-    });
+    setMinutes({ metadata, opening_statement: '', discussions: [], conclusions: [], tasks: [], closing_statement: '' });
     setActiveTab('document');
   };
 
@@ -330,15 +224,9 @@ export default function App() {
       setRecordError('Vui lòng ghi âm từ microphone hoặc tải lên file âm thanh cuộc họp trước khi soạn thảo.');
       return;
     }
-    if (!geminiKey.trim()) {
-      setRecordError(`Phong cách ${currentAssistant.name}: hãy mở cấu hình và nhập khóa ${processingProvider.name} để phân tích âm thanh.`);
-      return;
-    }
-
-
     setIsAnalyzing(true);
     setRecordError(null);
-    setAnalysisStatus(`${processingProvider.name} đang xử lý âm thanh — phong cách ${currentAssistant.name}...`);
+    setAnalysisStatus(`Trợ lý Google Gemini đang kết nối và xử lý tệp âm thanh cuộc họp...`);
 
     try {
       const base64 = await blobToBase64(audioBlob);
@@ -353,17 +241,15 @@ export default function App() {
         else mimeType = 'audio/webm';
       }
 
-      setAnalysisStatus(`${processingProvider.name} đang gỡ băng — phong cách ${currentAssistant.name}...`);
+      setAnalysisStatus(`Trợ lý Google Gemini đang gỡ băng lời nói tiếng Việt và tổng hợp các ý kiến thảo luận...`);
 
       const data = await analyzeAudioWithGemini({
-        apiKey: geminiKey,
         audioBase64: base64,
         mimeType: mimeType,
         metadata: metadata,
-        aiAssistant: selectedAi,
       });
 
-      setAnalysisStatus(`Đang hoàn thiện biên bản — phong cách ${currentAssistant.name}...`);
+      setAnalysisStatus(`Trợ lý Google Gemini đang hoàn thiện Biên bản cuộc họp chuẩn thể thức Nghị định 30/2020/NĐ-CP...`);
 
       if (data.segments && Array.isArray(data.segments)) {
         setSegments(data.segments);
@@ -382,7 +268,7 @@ export default function App() {
       setActiveTab('document');
     } catch (err: any) {
       console.error('Lỗi khi phân tích âm thanh:', err);
-      setRecordError(`${processingProvider.name} — phong cách ${currentAssistant.name}: ${err.message || 'Không thể hoàn tất phân tích.'}`);
+      setRecordError(`Lỗi xử lý: ${err.message || 'Không thể hoàn tất phân tích.'}`);
     } finally {
       setIsAnalyzing(false);
       setAnalysisStatus('');
@@ -397,7 +283,7 @@ export default function App() {
     }
     setIsExportingWord(true);
     try {
-      const blob = await generateWordDocument(minutes);
+      const blob = await generateWordDocument({ ...minutes, metadata });
       const filename = `Bien_ban_hop_NUTE_${metadata.document_code.replace(/[^a-zA-Z0-9]/g, '_') || 'cuoc_hop'}.docx`;
       downloadWordDocument(blob, filename);
     } catch (e: any) {
@@ -660,91 +546,6 @@ Nơi nhận:
         {/* TAB 1: GHI ÂM, GỠ BĂNG & CHỌN TRỢ LÝ AI */}
         {activeTab === 'pipeline' && (
           <div className="space-y-6">
-            {/* LỰA CHỌN TRỢ LÝ AI (Hộp sổ để chọn) */}
-            <div className="bg-white rounded-lg border border-slate-300 shadow-sm p-4 space-y-3">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-[#0A1E60]" />
-                  <label htmlFor="ai-assistant-select" className="font-bold text-sm sm:text-base text-[#0A1E60] uppercase">
-                    Phong cách soạn thảo biên bản
-                  </label>
-                </div>
-
-                <div className="w-full md:w-96">
-                  <select
-                    id="ai-assistant-select"
-                    value={selectedAi}
-                    disabled={isAnalyzing}
-                    onChange={(e) => {
-                      setSelectedAi(e.target.value as AiAssistantOption['id']);
-                      setShowKey(false);
-                      setRecordError(null);
-                    }}
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-lg font-bold text-[#0A1E60] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0A1E60] focus:bg-white transition cursor-pointer"
-                  >
-                    {AI_ASSISTANTS.map((ai) => (
-                      <option key={ai.id} value={ai.id}>
-                        {ai.name} — {ai.badge}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Thông tin trợ lý đang được chọn */}
-              <div className="bg-slate-50 p-2.5 rounded-md border border-slate-200 flex items-center justify-between text-xs text-slate-700">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-[#0A1E60]">
-                    Phong cách: {currentAssistant.name} · Xử lý: {processingProvider.name}
-                  </span>
-                  <span className="text-slate-400">|</span>
-                  <span className="text-slate-600 hidden sm:inline">
-                    {currentAssistant.description}
-                  </span>
-                </div>
-                <span className="font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] shrink-0">
-                  {currentAssistant.badge}
-                </span>
-              </div>
-
-              {/* Cấu hình AI thu gọn */}
-              <details className="bg-slate-50 border border-slate-200 rounded-md p-3">
-                <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                  Cấu hình phong cách {currentAssistant.name}
-                </summary>
-                <div className="mt-3 space-y-2">
-                  <label htmlFor="gemini-key" className="block text-xs font-semibold text-slate-700">
-                    {processingProvider.keyLabel}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      id="gemini-key"
-                      type={showKey ? 'text' : 'password'}
-                      value={geminiKey}
-                      disabled={isAnalyzing}
-                      onChange={(e) => updateGeminiKey(e.target.value)}
-                      placeholder={`Nhập khóa ${processingProvider.name} — phong cách ${currentAssistant.name}`}
-                      autoComplete="off"
-                      className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKey(!showKey)}
-                      className="px-3 py-2 text-xs font-semibold border border-slate-300 rounded bg-white hover:bg-slate-100"
-                    >
-                      {showKey ? 'Ẩn' : 'Hiện'}
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Phong cách: {currentAssistant.name}. Dịch vụ phân tích: {processingProvider.name}.
-                    Các lựa chọn ChatGPT, Claude và DeepSeek trong bản này là phong cách soạn thảo,
-                    chưa phải kết nối tới API của các hãng đó. Khi phân tích, âm thanh được gửi tới {processingProvider.destination}.
-                    Có thể ghi âm và tải bản ghi khi để trống key; tạo biên bản bằng AI cần key của {processingProvider.name}.
-                  </p>
-                </div>
-              </details>
-            </div>
-
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Cột 1: Thu âm microphone hoặc tải file */}
               <div className="bg-white rounded-lg border border-slate-300 shadow-sm p-5 space-y-5">
@@ -813,6 +614,7 @@ Nơi nhận:
                     {!isRecording ? (
                       <button
                         onClick={startRecording}
+                        disabled={isAnalyzing}
                         className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow transition cursor-pointer"
                       >
                         <Mic className="w-4 h-4" />
@@ -839,7 +641,7 @@ Nơi nhận:
                     <Upload className="w-5 h-5 text-slate-400 mb-1" />
                     <span className="text-xs text-slate-600 font-medium">Nhấn để chọn tệp âm thanh cuộc họp</span>
                     <span className="text-[11px] text-slate-400">Hỗ trợ tệp ghi âm điện thoại, máy ghi âm hội trường</span>
-                    <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
+                    <input type="file" accept="audio/*" disabled={isRecording || isAnalyzing} onChange={handleFileUpload} className="hidden" />
                   </label>
                 </div>
 
@@ -860,18 +662,18 @@ Nơi nhận:
 
                     <button
                       onClick={handleAnalyzeAudio}
-                      disabled={isAnalyzing}
+                      disabled={isAnalyzing || isRecording}
                       className="w-full py-2.5 bg-[#0A1E60] hover:bg-blue-900 text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow transition cursor-pointer disabled:opacity-50"
                     >
                       {isAnalyzing ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin text-yellow-300" />
-                          <span>{processingProvider.name} đang soạn — phong cách {currentAssistant.name}...</span>
+                          <span>Trợ lý Google Gemini đang soạn thảo...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 text-yellow-300" />
-                          <span>Phân tích & Soạn biên bản — {currentAssistant.name}</span>
+                          <span>Phân tích và tạo biên bản</span>
                         </>
                       )}
                     </button>
@@ -902,7 +704,7 @@ Nơi nhận:
                     <Clock className="w-8 h-8 text-slate-400 mx-auto" />
                     <p className="text-sm text-slate-600 font-medium">Chưa có dữ liệu lời thoại cuộc họp</p>
                     <p className="text-xs text-slate-400 max-w-md mx-auto">
-                      Hãy thu âm trực tiếp hoặc tải tệp âm thanh cuộc họp lên, chọn phong cách và bấm <strong>"Phân tích & Soạn biên bản"</strong>.
+                      Hãy thu âm trực tiếp hoặc tải tệp âm thanh cuộc họp lên, bấm <strong>"Phân tích và tạo biên bản"</strong>.
                     </p>
                   </div>
                 ) : (
@@ -1369,7 +1171,7 @@ Nơi nhận:
                 </div>
                 <h3 className="font-bold text-lg text-[#0A1E60]">Chưa có nội dung biên bản cuộc họp</h3>
                 <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để {processingProvider.name} phân tích và soạn biên bản theo phong cách đã chọn.
+                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để Trợ lý AI tự động soạn thảo biên bản thực tế.
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1555,7 +1357,7 @@ Nơi nhận:
                                 </p>
                               ))
                             ) : (
-                              <p className="italic text-slate-600">Các thành viên dự họp đã thảo luận và thống nhất các nội dung.</p>
+                              <p className="italic text-slate-600">Chưa có dữ liệu ý kiến thảo luận.</p>
                             )}
                           </div>
                         </div>
@@ -1569,7 +1371,7 @@ Nơi nhận:
                       </div>
                       <div style={{ fontSize: '13pt' }} className="pl-6 space-y-2.5 text-justify">
                         <p style={{ textIndent: '1.2cm' }}>
-                          Sau khi nghe các báo cáo và ý kiến thảo luận của các thành viên tham dự, đồng chí {metadata.chair_name} - {metadata.chair_title} kết luận và chỉ đạo như sau:
+                          Nội dung kết luận được ghi nhận từ nguồn cuộc họp:
                         </p>
                         <ul className="list-decimal pl-6 space-y-1.5">
                           {minutes.conclusions && minutes.conclusions.length > 0 ? (
@@ -1579,7 +1381,7 @@ Nơi nhận:
                               </li>
                             ))
                           ) : (
-                            <li>Thống nhất thông qua các nội dung kế hoạch đã thảo luận.</li>
+                            <li>Chưa có dữ liệu kết luận của chủ trì.</li>
                           )}
                         </ul>
 

@@ -1,12 +1,13 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
 
 // Hỗ trợ upload file audio dung lượng lớn (tối đa 100MB base64)
 app.use(express.json({ limit: '100mb' }));
@@ -292,12 +293,21 @@ app.get('/api/status', (req, res) => {
 });
 
 async function startServer() {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa',
-  });
-
-  app.use(vite.middlewares);
+  if (process.env.NODE_ENV === 'production') {
+    // Chế độ chạy thật (Render, VPS...): phục vụ file đã build trong thư mục dist
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
+    // Chế độ phát triển: dùng Vite middleware
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  }
 
   app.listen(port, '0.0.0.0', () => {
     console.log(`[Meeting Assistant - NUTE Edition] Đang chạy tại http://localhost:${port}`);

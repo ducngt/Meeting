@@ -695,37 +695,39 @@ Nơi nhận:
                 </span>
               </div>
 
-              {/* Khóa Gemini do người dùng tự nhập, chỉ lưu trong trình duyệt */}
-              <div className="bg-amber-50 border border-amber-300 rounded-md p-3 space-y-2">
-                <label htmlFor="gemini-key" className="block text-xs font-bold text-amber-900">
-                  Khóa Google Gemini API (bắt buộc để gỡ băng và soạn biên bản)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="gemini-key"
-                    type={showKey ? 'text' : 'password'}
-                    value={geminiKey}
-                    onChange={(e) => updateGeminiKey(e.target.value)}
-                    placeholder="Dán khóa bắt đầu bằng AIza..."
-                    autoComplete="off"
-                    className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowKey(!showKey)}
-                    className="px-3 py-2 text-xs font-bold border border-amber-300 rounded bg-white hover:bg-amber-100 cursor-pointer"
-                  >
-                    {showKey ? 'Ẩn' : 'Hiện'}
-                  </button>
+              {/* Cấu hình AI thu gọn */}
+              <details className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                  Cấu hình AI — tùy chọn
+                </summary>
+                <div className="mt-3 space-y-2">
+                  <label htmlFor="gemini-key" className="block text-xs font-semibold text-slate-700">
+                    Khóa Google Gemini API
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="gemini-key"
+                      type={showKey ? 'text' : 'password'}
+                      value={geminiKey}
+                      onChange={(e) => updateGeminiKey(e.target.value)}
+                      placeholder="Nhập khóa nếu sử dụng Gemini API"
+                      autoComplete="off"
+                      className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey(!showKey)}
+                      className="px-3 py-2 text-xs font-semibold border border-slate-300 rounded bg-white hover:bg-slate-100"
+                    >
+                      {showKey ? 'Ẩn' : 'Hiện'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Có thể để trống khi ghi âm hoặc tải bản ghi. Chức năng phân tích bằng Gemini hiện cần khóa API.
+                    Khóa được lưu trong trình duyệt; khi phân tích, âm thanh được gửi tới Google.
+                  </p>
                 </div>
-                <p className="text-[11px] text-amber-900 leading-relaxed">
-                  Khóa chỉ lưu trong trình duyệt của bạn và được gửi trực tiếp tới Google. Lấy khóa miễn phí tại{' '}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="underline font-semibold">
-                    aistudio.google.com/apikey
-                  </a>
-                  . Lưu ý: file ghi âm cuộc họp sẽ được gửi tới Google để xử lý.
-                </p>
-              </div>
+              </details>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

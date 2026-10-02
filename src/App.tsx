@@ -37,6 +37,7 @@ import { DEFAULT_METADATA, DEFAULT_ATTENDEES } from './sampleData';
 import { getSupportedMimeType } from './audioUtils';
 import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
+import { analyzeAudioWithGemini } from './lib/geminiClient';
 
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -116,6 +117,23 @@ export default function App() {
 
   // Yêu cầu 5: Box lựa chọn trợ lý AI (không cần Key API)
   const [selectedAi, setSelectedAi] = useState<'chatgpt' | 'gemini' | 'claude' | 'deepseek'>('chatgpt');
+  const [geminiKey, setGeminiKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('gemini_api_key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showKey, setShowKey] = useState(false);
+  const updateGeminiKey = (value: string) => {
+    setGeminiKey(value);
+    try {
+      if (value.trim()) localStorage.setItem('gemini_api_key', value.trim());
+      else localStorage.removeItem('gemini_api_key');
+    } catch {
+      /* trình duyệt chặn lưu trữ: bỏ qua */
+    }
+  };
 
   // Thu âm microphone
   const [isRecording, setIsRecording] = useState(false);
@@ -305,6 +323,10 @@ export default function App() {
       setRecordError('Vui lòng ghi âm từ microphone hoặc tải lên file âm thanh cuộc họp trước khi soạn thảo.');
       return;
     }
+    if (!geminiKey.trim()) {
+      setRecordError('Vui lòng nhập khóa Google Gemini API ở ô phía trên trước khi soạn thảo.');
+      return;
+    }
 
     const currentAi = AI_ASSISTANTS.find((a) => a.id === selectedAi);
     setIsAnalyzing(true);
@@ -326,19 +348,15 @@ export default function App() {
 
       setAnalysisStatus(`Trợ lý ${currentAi?.name} đang gỡ băng lời nói tiếng Việt và tổng hợp các ý kiến thảo luận...`);
 
-      const res = await fetch('/api/analyze-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64: base64,
-          mimeType: mimeType,
-          metadata: metadata,
-          ai_assistant: selectedAi,
-        }),
+      const data = await analyzeAudioWithGemini({
+        apiKey: geminiKey,
+        audioBase64: base64,
+        mimeType: mimeType,
+        metadata: metadata,
+        aiAssistant: selectedAi,
       });
 
       setAnalysisStatus(`Trợ lý ${currentAi?.name} đang hoàn thiện Biên bản cuộc họp chuẩn thể thức Nghị định 30/2020/NĐ-CP...`);
-      const data = await res.json();
 
       if (data.segments && Array.isArray(data.segments)) {
         setSegments(data.segments);
@@ -675,6 +693,38 @@ Nơi nhận:
                 <span className="font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] shrink-0">
                   {AI_ASSISTANTS.find((a) => a.id === selectedAi)?.badge}
                 </span>
+              </div>
+
+              {/* Khóa Gemini do người dùng tự nhập, chỉ lưu trong trình duyệt */}
+              <div className="bg-amber-50 border border-amber-300 rounded-md p-3 space-y-2">
+                <label htmlFor="gemini-key" className="block text-xs font-bold text-amber-900">
+                  Khóa Google Gemini API (bắt buộc để gỡ băng và soạn biên bản)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="gemini-key"
+                    type={showKey ? 'text' : 'password'}
+                    value={geminiKey}
+                    onChange={(e) => updateGeminiKey(e.target.value)}
+                    placeholder="Dán khóa bắt đầu bằng AIza..."
+                    autoComplete="off"
+                    className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    className="px-3 py-2 text-xs font-bold border border-amber-300 rounded bg-white hover:bg-amber-100 cursor-pointer"
+                  >
+                    {showKey ? 'Ẩn' : 'Hiện'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-900 leading-relaxed">
+                  Khóa chỉ lưu trong trình duyệt của bạn và được gửi trực tiếp tới Google. Lấy khóa miễn phí tại{' '}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="underline font-semibold">
+                    aistudio.google.com/apikey
+                  </a>
+                  . Lưu ý: file ghi âm cuộc họp sẽ được gửi tới Google để xử lý.
+                </p>
               </div>
             </div>
 

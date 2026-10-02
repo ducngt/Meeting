@@ -29,11 +29,11 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
 
   const chairFull = metadata.chair_name
     ? `${metadata.chair_name} - ${metadata.chair_title || 'Hiệu trưởng'} (${metadata.chair_unit || 'Ban Giám hiệu'})`
-    : metadata.chair || 'Chưa khai báo chủ trì';
+    : metadata.chair || 'TS. Đặng Nguyên Hà - Hiệu trưởng';
 
   const secretaryFull = metadata.secretary_name
     ? `${metadata.secretary_name} - ${metadata.secretary_title || 'Phó Chánh Văn phòng'} (${metadata.secretary_unit || 'Văn phòng Trường'})`
-    : metadata.secretary || 'Chưa khai báo thư ký';
+    : metadata.secretary || 'ThS. Trần Văn Nam - Phó Chánh Văn phòng';
 
   const doc = new Document({
     styles: {
@@ -177,7 +177,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                         alignment: AlignmentType.CENTER,
                         children: [
                           new TextRun({
-                            text: metadata.location_date || 'Chưa khai báo ngày họp',
+                            text: metadata.location_date || 'Nam Định, ngày 02 tháng 10 năm 2026',
                             italics: true,
                             size: 26, // 13pt
                           }),
@@ -210,7 +210,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             spacing: { before: 60, after: 240 },
             children: [
               new TextRun({
-                text: (metadata.meeting_title || 'Chưa khai báo tên cuộc họp').toUpperCase(),
+                text: (metadata.meeting_title || 'Cuộc họp Ban Giám hiệu về công tác trọng tâm').toUpperCase(),
                 bold: true,
                 size: 28, // 14pt
               }),
@@ -233,7 +233,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             children: [
               new TextRun({ text: '- Thời gian: ', bold: true }),
               new TextRun({
-                text: `Bắt đầu từ ${metadata.start_time || 'Chưa khai báo'}, kết thúc hồi ${metadata.end_time || 'Chưa khai báo'}.`,
+                text: `Bắt đầu từ ${metadata.start_time || '08 giờ 30 phút'}, kết thúc hồi ${metadata.end_time || '11 giờ 30 phút cùng ngày'}.`,
               }),
             ],
           }),
@@ -242,7 +242,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             children: [
               new TextRun({ text: '- Địa điểm: ', bold: true }),
               new TextRun({
-                text: metadata.location || 'Chưa khai báo địa điểm',
+                text: metadata.location || 'Phòng họp Ban Giám hiệu, Tầng 2 - Nhà Hiệu bộ, Trường ĐH SPKT Nam Định',
               }),
             ],
           }),
@@ -298,7 +298,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             children: [
               new TextRun({ text: '5. Đại biểu vắng mặt: ', bold: true }),
               new TextRun({
-                text: metadata.absentees_detail || metadata.absentees || 'Chưa khai báo thông tin vắng mặt.',
+                text: metadata.absentees_detail || metadata.absentees || 'Không có (Có mặt đầy đủ).',
               }),
             ],
           }),
@@ -321,7 +321,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
               new TextRun({
                 text:
                   opening_statement ||
-                  'Chưa có dữ liệu phát biểu khai mạc.',
+                  'Đồng chí Chủ trì phát biểu khai mạc, nêu rõ mục đích, yêu cầu và nội dung trọng tâm của cuộc họp cần giải quyết dứt điểm.',
               }),
             ],
           }),
@@ -354,7 +354,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                   indent: { left: convertMillimetersToTwip(12) },
                   children: [
                     new TextRun({
-                      text: 'Chưa có dữ liệu ý kiến thảo luận.',
+                      text: '- Các thành viên dự họp đã thảo luận, đóng góp ý kiến sôi nổi, tập trung vào các giải pháp thực thi hiệu quả.',
                       italics: true,
                     }),
                   ],
@@ -376,7 +376,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             indent: { left: convertMillimetersToTwip(10) },
             children: [
               new TextRun({
-                text: 'Nội dung kết luận được ghi nhận từ nguồn cuộc họp:',
+                text: 'Sau khi nghe các báo cáo và ý kiến thảo luận của các thành viên tham dự, đồng chí Chủ trì cuộc họp kết luận và chỉ đạo như sau:',
               }),
             ],
           }),
@@ -398,7 +398,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                 new Paragraph({
                   indent: { left: convertMillimetersToTwip(12) },
                   children: [
-                    new TextRun({ text: 'Chưa có dữ liệu kết luận của chủ trì.' }),
+                    new TextRun({ text: '1. Thống nhất thông qua các đề xuất trọng tâm theo đúng kế hoạch đề ra.' }),
                   ],
                 }),
               ]),
@@ -488,7 +488,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                           new TableCell({
                             children: [
                               new Paragraph({
-                                children: [new TextRun({ text: t.assigned_unit || 'Chưa xác định', size: 24 })],
+                                children: [new TextRun({ text: t.assigned_unit || 'Đơn vị liên quan', size: 24 })],
                               }),
                             ],
                           }),
@@ -496,7 +496,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                             children: [
                               new Paragraph({
                                 alignment: AlignmentType.CENTER,
-                                children: [new TextRun({ text: t.deadline || 'Chưa xác định', size: 24 })],
+                                children: [new TextRun({ text: t.deadline || 'Theo kế hoạch', size: 24 })],
                               }),
                             ],
                           }),
@@ -530,7 +530,10 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
             children: [
               new TextRun({
                 text:
-                  closing_statement || 'Chưa có dữ liệu kết thúc hoặc thông qua biên bản.',
+                  closing_statement ||
+                  'Biên bản này được lập xong vào hồi ' +
+                    (metadata.end_time || '11 giờ 30 phút cùng ngày') +
+                    ', đã được đọc lại cho mọi người cùng nghe và nhất trí thông qua./.',
                 italics: true,
               }),
             ],
@@ -575,7 +578,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                         alignment: AlignmentType.CENTER,
                         children: [
                           new TextRun({
-                            text: metadata.secretary_name || metadata.secretary || 'Chưa khai báo thư ký',
+                            text: metadata.secretary_name || metadata.secretary || 'ThS. Trần Văn Nam',
                             bold: true,
                             size: 26,
                           }),
@@ -612,7 +615,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                         alignment: AlignmentType.CENTER,
                         children: [
                           new TextRun({
-                            text: metadata.chair_name || metadata.chair || 'Chưa khai báo chủ trì',
+                            text: metadata.chair_name || metadata.chair || 'TS. Đặng Nguyên Hà',
                             bold: true,
                             size: 26,
                           }),

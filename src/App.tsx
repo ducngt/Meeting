@@ -49,10 +49,11 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'metadata' | 'document' | 'export'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'metadata' | 'document' | 'export'>('metadata');
 
   const [metadata, setMetadata] = useState<MeetingMetadata>(DEFAULT_METADATA);
   const [attendeeList, setAttendeeList] = useState<AttendeeItem[]>(DEFAULT_ATTENDEES);
+  const [countEntered, setCountEntered] = useState<Record<string, boolean>>({});
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   // Yêu cầu 4: Bỏ hết dữ liệu ban đầu về nội dung mẫu cuộc họp (khởi tạo null hoàn toàn)
   const [minutes, setMinutes] = useState<AdministrativeMinutes | null>(null);
@@ -83,8 +84,8 @@ export default function App() {
   // Form thêm đại biểu mới
   const [newAttendee, setNewAttendee] = useState({
     name: '',
-    role: 'Trưởng phòng',
-    department: 'Phòng chức năng',
+    role: '',
+    department: '',
   });
 
   // Quản lý thu âm Microphone
@@ -203,6 +204,12 @@ export default function App() {
 
   const handleResetSession = () => {
     if (isRecording || isAnalyzing) return;
+    setMetadata({ ...DEFAULT_METADATA, attendee_list: [] });
+    setAttendeeList([]);
+    setCountEntered({});
+    setNewAttendee({ name: '', role: '', department: '' });
+    setActiveTab('metadata');
+    setAnalysisStatus('');
     setSegments([]);
     setMinutes(null);
     setAudioUrl(null);
@@ -278,7 +285,7 @@ export default function App() {
   // Xuất file Word (.docx)
   const handleDownloadWord = async () => {
     if (!minutes) {
-      alert('Chưa có nội dung biên bản cuộc họp. Vui lòng ghi âm và soạn thảo tại Tab 1 trước khi xuất file Word.');
+      alert('Chưa có nội dung biên bản cuộc họp. Vui lòng ghi âm và soạn thảo tại Tab 2 trước khi xuất file Word.');
       return;
     }
     setIsExportingWord(true);
@@ -366,7 +373,8 @@ Nơi nhận:
     };
     const nextList = [...attendeeList, added];
     setAttendeeList(nextList);
-    setNewAttendee({ name: '', role: 'Trưởng phòng', department: 'Phòng chức năng' });
+    setCountEntered({ total_invited: true, total_present: true, total_absent: true });
+    setNewAttendee({ name: '', role: '', department: '' });
 
     const summary = nextList.map((a) => `${a.name} (${a.role} - ${a.department})`).join(', ');
     const presentCount = nextList.filter((a) => a.present).length;
@@ -386,6 +394,7 @@ Nơi nhận:
   const handleRemoveAttendee = (id: string) => {
     const nextList = attendeeList.filter((a) => a.id !== id);
     setAttendeeList(nextList);
+    setCountEntered({ total_invited: true, total_present: true, total_absent: true });
     const summary = nextList.map((a) => `${a.name} (${a.role} - ${a.department})`).join(', ');
     const presentCount = nextList.filter((a) => a.present).length;
     const absentCount = nextList.filter((a) => !a.present).length;
@@ -404,6 +413,7 @@ Nơi nhận:
   const handleToggleAttendance = (id: string) => {
     const nextList = attendeeList.map((a) => (a.id === id ? { ...a, present: !a.present } : a));
     setAttendeeList(nextList);
+    setCountEntered({ total_invited: true, total_present: true, total_absent: true });
     const presentCount = nextList.filter((a) => a.present).length;
     const absentCount = nextList.filter((a) => !a.present).length;
     const absentees = nextList
@@ -471,19 +481,6 @@ Nơi nhận:
         {/* THANH ĐIỀU HƯỚNG TABS */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 overflow-x-auto border-t border-blue-900/60 pt-1">
           <button
-            onClick={() => setActiveTab('pipeline')}
-            className={`px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 transition flex items-center gap-2 cursor-pointer ${
-              activeTab === 'pipeline'
-                ? 'border-[#FEE000] text-yellow-300 bg-blue-950/60 font-bold'
-                : 'border-transparent text-slate-200 hover:text-white hover:border-slate-400'
-            }`}
-          >
-            <Mic className="w-4 h-4" />
-            1. Ghi âm & Gỡ băng cuộc họp
-            {audioBlob && <span className="w-2 h-2 rounded-full bg-emerald-400"></span>}
-          </button>
-
-          <button
             onClick={() => setActiveTab('metadata')}
             className={`px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 transition flex items-center gap-2 cursor-pointer ${
               activeTab === 'metadata'
@@ -492,8 +489,21 @@ Nơi nhận:
             }`}
           >
             <Users className="w-4 h-4" />
-            2. Thông tin & Danh sách đại biểu dự
+            1. Thông tin & Danh sách đại biểu dự
             {attendeeList.length > 0 && <span className="text-[11px] font-mono bg-blue-900/60 px-1.5 py-0.5 rounded">({attendeeList.length})</span>}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('pipeline')}
+            className={`px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'pipeline'
+                ? 'border-[#FEE000] text-yellow-300 bg-blue-950/60 font-bold'
+                : 'border-transparent text-slate-200 hover:text-white hover:border-slate-400'
+            }`}
+          >
+            <Mic className="w-4 h-4" />
+            2. Ghi âm & Gỡ băng cuộc họp
+            {audioBlob && <span className="w-2 h-2 rounded-full bg-emerald-400"></span>}
           </button>
 
           {/* Yêu cầu 3: Đổi "3. Biên bản họp NUTE (NĐ 30/2020)" thành "Biên bản họp" */}
@@ -653,7 +663,7 @@ Nơi nhận:
                         <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                         {audioFileName || 'Tệp ghi âm cuộc họp'}
                       </span>
-                      <button onClick={handleResetSession} className="text-xs text-red-600 hover:text-red-700 p-1 cursor-pointer" title="Hủy file">
+                      <button onClick={() => { if (isRecording || isAnalyzing) return; setAudioUrl(null); setAudioBlob(null); setAudioFileName(''); setRecordDuration(0); setRecordError(null); }} className="text-xs text-red-600 hover:text-red-700 p-1 cursor-pointer" title="Hủy file">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -964,8 +974,8 @@ Nơi nhận:
                   <input
                     type="number"
                     min="0"
-                    value={metadata.total_invited}
-                    onChange={(e) => setMetadata({ ...metadata, total_invited: parseInt(e.target.value) || 0 })}
+                    value={metadata.total_invited || (countEntered.total_invited ? 0 : '')}
+                    onChange={(e) => { setCountEntered(prev => ({ ...prev, total_invited: e.target.value !== '' })); setMetadata({ ...metadata, total_invited: Math.max(0, parseInt(e.target.value, 10) || 0) }); }}
                     placeholder="Nhập số đại biểu triệu tập"
                     className="w-full px-3 py-2 text-base bg-white border border-slate-300 rounded font-bold text-slate-900 focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
@@ -980,8 +990,8 @@ Nơi nhận:
                   <input
                     type="number"
                     min="0"
-                    value={metadata.total_present}
-                    onChange={(e) => setMetadata({ ...metadata, total_present: parseInt(e.target.value) || 0 })}
+                    value={metadata.total_present || (countEntered.total_present ? 0 : '')}
+                    onChange={(e) => { setCountEntered(prev => ({ ...prev, total_present: e.target.value !== '' })); setMetadata({ ...metadata, total_present: Math.max(0, parseInt(e.target.value, 10) || 0) }); }}
                     placeholder="Nhập số đại biểu có mặt"
                     className="w-full px-3 py-2 text-base bg-white border border-slate-300 rounded font-bold text-emerald-700 focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
@@ -996,8 +1006,8 @@ Nơi nhận:
                   <input
                     type="number"
                     min="0"
-                    value={metadata.total_absent}
-                    onChange={(e) => setMetadata({ ...metadata, total_absent: parseInt(e.target.value) || 0 })}
+                    value={metadata.total_absent || (countEntered.total_absent ? 0 : '')}
+                    onChange={(e) => { setCountEntered(prev => ({ ...prev, total_absent: e.target.value !== '' })); setMetadata({ ...metadata, total_absent: Math.max(0, parseInt(e.target.value, 10) || 0) }); }}
                     placeholder="Nhập số đại biểu vắng mặt"
                     className="w-full px-3 py-2 text-base bg-white border border-slate-300 rounded font-bold text-amber-700 focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
@@ -1029,6 +1039,7 @@ Nơi nhận:
                   <button
                     type="button"
                     onClick={() => {
+                      setCountEntered({ total_invited: true, total_present: true, total_absent: true });
                       const presentCount = attendeeList.filter((a) => a.present).length;
                       const absentCount = attendeeList.filter((a) => !a.present).length;
                       setMetadata({
@@ -1171,7 +1182,7 @@ Nơi nhận:
                 </div>
                 <h3 className="font-bold text-lg text-[#0A1E60]">Chưa có nội dung biên bản cuộc họp</h3>
                 <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 1</strong> để Trợ lý AI tự động soạn thảo biên bản thực tế.
+                  Hệ thống không cài sẵn nội dung giả lập. Vui lòng ghi âm từ microphone hoặc tải lên tệp âm thanh cuộc họp tại <strong>Tab 2</strong> để Trợ lý AI tự động soạn thảo biên bản thực tế.
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1180,7 +1191,7 @@ Nơi nhận:
                     className="px-5 py-2.5 bg-[#0A1E60] hover:bg-blue-900 text-white rounded text-xs font-bold shadow flex items-center gap-2 cursor-pointer"
                   >
                     <Mic className="w-4 h-4" />
-                    Chuyển đến Tab 1 để Ghi âm ngay
+                    Chuyển đến Tab 2 để Ghi âm ngay
                   </button>
 
                   <button
@@ -1259,14 +1270,14 @@ Nơi nhận:
                       {/* Cột trái: Cơ quan chủ quản & Cơ quan ban hành */}
                       <div className="flex flex-col items-center">
                         <div style={{ fontSize: '12pt' }} className="uppercase">
-                          {metadata.superior_agency || 'BỘ GIÁO DỤC VÀ ĐÀO TẠO'}
+                          {metadata.superior_agency}
                         </div>
                         <div style={{ fontSize: '12pt' }} className="font-bold uppercase">
-                          {metadata.agency_name || 'TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH'}
+                          {metadata.agency_name}
                         </div>
                         <div className="w-28 h-[1px] bg-black my-1"></div>
                         <div style={{ fontSize: '13pt' }}>
-                          {metadata.document_code || 'Số: .../BB-ĐHSPKTNĐ'}
+                          {metadata.document_code}
                         </div>
                       </div>
 
@@ -1280,7 +1291,7 @@ Nơi nhận:
                         </div>
                         <div className="w-40 h-[1.5px] bg-black my-1"></div>
                         <div style={{ fontSize: '13pt' }} className="italic">
-                          {metadata.location_date || 'Nam Định, ngày 02 tháng 10 năm 2026'}
+                          {metadata.location_date}
                         </div>
                       </div>
                     </div>
@@ -1302,10 +1313,10 @@ Nơi nhận:
                       </div>
                       <div style={{ fontSize: '13pt' }} className="pl-6 space-y-1">
                         <p>
-                          <strong className="font-bold">- Thời gian:</strong> Bắt đầu từ {metadata.start_time || '08 giờ 30 phút'}, kết thúc hồi {metadata.end_time || '11 giờ 30 phút cùng ngày'}.
+                          <strong className="font-bold">- Thời gian:</strong> Bắt đầu từ {metadata.start_time}, kết thúc hồi {metadata.end_time}.
                         </p>
                         <p>
-                          <strong className="font-bold">- Địa điểm:</strong> {metadata.location || 'Phòng họp Ban Giám hiệu, Tầng 2 - Nhà Hiệu bộ, Trường ĐH SPKT Nam Định'}
+                          <strong className="font-bold">- Địa điểm:</strong> {metadata.location}
                         </p>
                       </div>
                     </div>

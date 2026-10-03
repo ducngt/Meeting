@@ -4,11 +4,11 @@ import { MeetingMetadata, AttendeeItem } from './types';
 export const DEFAULT_ATTENDEES: AttendeeItem[] = [];
 
 export const DEFAULT_METADATA: MeetingMetadata = {
-  superior_agency: '',
-  agency_name: '',
+  superior_agency: 'BỘ GIÁO DỤC VÀ ĐÀO TẠO',
+  agency_name: 'TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH',
   document_code: '',
   location: '',
-  location_date: '',
+  location_date: 'Ninh Bình, ngày … tháng … năm …',
   meeting_title: '',
   start_time: '',
   end_time: '',

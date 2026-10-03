@@ -33,6 +33,8 @@ import { DEFAULT_METADATA, DEFAULT_ATTENDEES } from './sampleData';
 import { getSupportedMimeType } from './audioUtils';
 import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
+import { listMeetings, saveMeeting, deleteMeeting, recordingDate, recordingTime } from './lib/meetingStore';
+import type { SavedMeeting } from './lib/meetingStore';
 import { analyzeAudioWithGemini } from './lib/geminiClient';
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -75,6 +77,77 @@ export default function App() {
   const animFrameRef = useRef<number | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
+  const [savedMeetings, setSavedMeetings] = useState<SavedMeeting[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [storageMessage, setStorageMessage] = useState('');
+  const sessionRef = useRef({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), recordingStartedAt: '', recordingEndedAt: '' });
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  const refreshMeetings = async () => setSavedMeetings(await listMeetings());
+  useEffect(() => {
+    refreshMeetings().catch(() => setStorageMessage('Không mở được dữ liệu đã lưu. Hãy cho phép website lưu dữ liệu trong trình duyệt.'));
+  }, []);
+
+  const persistMeeting = (record: SavedMeeting): Promise<SavedMeeting> => {
+    const operation = saveQueueRef.current.catch(() => undefined).then(() => saveMeeting(record));
+    saveQueueRef.current = operation;
+    return operation;
+  };
+
+  const handleSaveMeeting = async () => {
+    if (isRecording || isAnalyzing || isSaving) return;
+    setIsSaving(true);
+    try {
+      const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+        metadata, minutes, segments, audioBlob, audioFileName, duration: recordDuration });
+      setMetadata(saved.metadata);
+      setMinutes(saved.minutes);
+      await refreshMeetings();
+      setStorageMessage(saved.minutes ? `Đã lưu biên bản ${saved.metadata.document_code}.` : 'Đã lưu cuộc họp và bản ghi âm.');
+    } catch {
+      setStorageMessage('Không lưu được: bộ nhớ trình duyệt có thể đã đầy. Hãy tải bản ghi âm và Word về máy.');
+    } finally { setIsSaving(false); }
+  };
+
+  const handleDownloadAudio = (blob: Blob | null = audioBlob, name: string = audioFileName) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name || 'ghi-am-cuoc-hop.webm';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleOpenMeeting = async (id: string) => {
+    if (isRecording || isAnalyzing || isSaving) return;
+    try {
+      await saveQueueRef.current;
+      const record = (await listMeetings()).find(item => item.id === id);
+      if (!record) throw new Error('missing');
+      sessionRef.current = { id: record.id, createdAt: record.createdAt,
+        recordingStartedAt: record.recordingStartedAt || '', recordingEndedAt: record.recordingEndedAt || '' };
+      setMetadata(record.metadata);
+      setAttendeeList(record.metadata.attendee_list || []);
+      setCountEntered({ total_invited: true, total_present: true, total_absent: true });
+      setMinutes(record.minutes);
+      setSegments(record.segments);
+      setAudioBlob(record.audioBlob);
+      setAudioUrl(record.audioBlob ? URL.createObjectURL(record.audioBlob) : null);
+      setAudioFileName(record.audioFileName);
+      setRecordDuration(record.duration);
+      setRecordError(null);
+      setStorageMessage('Đã mở cuộc họp đã lưu.');
+      setActiveTab(record.minutes ? 'document' : 'metadata');
+    } catch { setStorageMessage('Không mở được cuộc họp đã lưu.'); }
+  };
+
+  useEffect(() => {
+    return () => { if (audioUrl) URL.revokeObjectURL(audioUrl); };
+  }, [audioUrl]);
+
   // Trạng thái xử lý
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
@@ -90,6 +163,7 @@ export default function App() {
 
   // Quản lý thu âm Microphone
   const startRecording = async () => {
+    if (isSaving || isAnalyzing || isRecording) return;
     setRecordError(null);
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -145,13 +219,36 @@ export default function App() {
       mediaRecorder.onstop = () => {
         const type = mediaRecorder.mimeType || 'audio/webm';
         const blob = new Blob(audioChunksRef.current, { type });
+        const ended = new Date(sessionRef.current.recordingEndedAt || new Date().toISOString());
+        const started = new Date(sessionRef.current.recordingStartedAt);
+        sessionRef.current.recordingEndedAt = ended.toISOString();
+        const duration = Math.max(0, Math.round((ended.getTime() - started.getTime()) / 1000));
+        const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        const name = `Ghi_am_NUTE_${started.toISOString().replace(/[:.]/g, '-')}.${ext}`;
+        const nextMetadata = { ...metadataRef.current, end_time: recordingTime(ended) };
+        metadataRef.current = nextMetadata;
+        setMetadata(nextMetadata);
         setAudioBlob(blob);
-        const url = URL.createObjectURL(blob);
-        setAudioUrl(url);
-        setAudioFileName(`Ghi_am_hop_NUTE_${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.webm`);
+        setAudioUrl(URL.createObjectURL(blob));
+        setAudioFileName(name);
+        setRecordDuration(duration);
+        setIsSaving(true);
+        persistMeeting({ ...sessionRef.current, updatedAt: ended.toISOString(), metadata: nextMetadata,
+          minutes: null, segments: [], audioBlob: blob, audioFileName: name, duration })
+          .then(async () => { await refreshMeetings(); setStorageMessage('Đã tự động lưu bản ghi âm.'); })
+          .catch(() => setStorageMessage('Không lưu được bản ghi vào trình duyệt. Hãy tải âm thanh về máy.'))
+          .finally(() => setIsSaving(false));
       };
 
       mediaRecorder.start(250);
+      const started = new Date();
+      sessionRef.current = { id: crypto.randomUUID(), createdAt: started.toISOString(), recordingStartedAt: started.toISOString(), recordingEndedAt: '' };
+      const nextMetadata = { ...metadataRef.current, document_code: '', location_date: recordingDate(started), start_time: recordingTime(started), end_time: '' };
+      metadataRef.current = nextMetadata;
+      setMetadata(nextMetadata);
+      setMinutes(null);
+      setSegments([]);
+      setStorageMessage('');
       setIsRecording(true);
       setRecordDuration(0);
 
@@ -171,6 +268,8 @@ export default function App() {
   };
 
   const stopRecording = () => {
+    setIsSaving(true);
+    sessionRef.current.recordingEndedAt = new Date().toISOString();
     setIsRecording(false);
     if (timerRef.current) clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -186,6 +285,7 @@ export default function App() {
         mediaRecorderRef.current.stop();
         mediaRecorderRef.current.stream?.getTracks().forEach((track) => track.stop());
       } catch (e) {
+        setIsSaving(false);
         console.warn('Lỗi dừng mediaRecorder:', e);
       }
     }
@@ -193,7 +293,13 @@ export default function App() {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && !isRecording && !isAnalyzing) {
+    if (file && !isRecording && !isAnalyzing && !isSaving) {
+      sessionRef.current = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), recordingStartedAt: '', recordingEndedAt: '' };
+      setMinutes(null);
+      setSegments([]);
+      setRecordDuration(0);
+      setMetadata(prev => ({ ...prev, document_code: '', start_time: '', end_time: '' }));
+      setStorageMessage('Tệp tải lên: hãy khai báo ngày và thời gian cuộc họp rồi bấm Lưu cuộc họp.');
       setAudioBlob(file);
       const url = URL.createObjectURL(file);
       setAudioUrl(url);
@@ -203,7 +309,9 @@ export default function App() {
   };
 
   const handleResetSession = () => {
-    if (isRecording || isAnalyzing) return;
+    if (isRecording || isAnalyzing || isSaving) return;
+    sessionRef.current = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), recordingStartedAt: '', recordingEndedAt: '' };
+    setStorageMessage('');
     setMetadata({ ...DEFAULT_METADATA, attendee_list: [] });
     setAttendeeList([]);
     setCountEntered({});
@@ -263,13 +371,19 @@ export default function App() {
       }
 
       if (data.minutes) {
-        setMinutes({
-          ...data.minutes,
-          metadata: {
-            ...metadata,
-            ...(data.minutes.metadata || {}),
-          },
-        });
+        const nextMinutes = { ...data.minutes, metadata: { ...metadataRef.current } };
+        setMinutes(nextMinutes);
+        try {
+          const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+            metadata: nextMinutes.metadata, minutes: nextMinutes, segments: data.segments || [],
+            audioBlob, audioFileName, duration: recordDuration });
+          setMetadata(saved.metadata);
+          setMinutes(saved.minutes);
+          await refreshMeetings();
+          setStorageMessage(`Đã tự động lưu biên bản ${saved.metadata.document_code}.`);
+        } catch {
+          setStorageMessage('Biên bản đã tạo nhưng chưa lưu được vào trình duyệt. Hãy tải Word và âm thanh về máy.');
+        }
       }
 
       setActiveTab('document');
@@ -553,6 +667,48 @@ Nơi nhận:
           </div>
         </div>
 
+        <section className="no-print mb-6 bg-white rounded-lg border border-slate-300 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-bold text-[#0A1E60]">Cuộc họp đã lưu ({savedMeetings.length})</h3>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={handleSaveMeeting} disabled={isRecording || isAnalyzing || isSaving}
+                className="px-3 py-2 bg-[#0A1E60] text-white rounded text-xs disabled:opacity-50">
+                {isSaving ? 'Đang lưu…' : 'Lưu cuộc họp'}
+              </button>
+              <button onClick={() => handleDownloadAudio()} disabled={!audioBlob || isRecording}
+                className="px-3 py-2 bg-slate-100 border rounded text-xs disabled:opacity-50">Tải bản ghi âm</button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">Lưu trên trình duyệt của máy này. Hãy tải âm thanh và Word về máy để giữ bản sao.</p>
+          {storageMessage && <p role="status" className="text-sm text-blue-800">{storageMessage}</p>}
+          <div className="space-y-2 max-h-64 overflow-auto">
+            {savedMeetings.map(record => (
+              <div key={record.id} className="flex flex-wrap justify-between items-center gap-2 border rounded p-2 text-xs">
+                <div>
+                  <strong>{record.metadata.document_code || 'Chưa cấp số biên bản'}</strong>
+                  <span> — {record.metadata.meeting_title || 'Cuộc họp chưa đặt tên'}</span>
+                  <div className="text-slate-500">{record.metadata.location_date || 'Chưa khai báo ngày họp'}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button disabled={isRecording || isAnalyzing || isSaving} onClick={() => handleOpenMeeting(record.id)} className="text-blue-700 disabled:opacity-50">Mở</button>
+                  {record.audioBlob && <button onClick={() => handleDownloadAudio(record.audioBlob, record.audioFileName)} className="text-blue-700">Tải âm thanh</button>}
+                  {record.minutes && <button onClick={async () => {
+                    try { const blob = await generateWordDocument({ ...record.minutes!, metadata: record.metadata });
+                      downloadWordDocument(blob, `Bien_ban_${record.metadata.document_code.replace(/[^a-zA-Z0-9]/g, '_')}.docx`);
+                    } catch { setStorageMessage('Không xuất được Word. Hãy thử mở cuộc họp rồi xuất lại.'); }
+                  }} className="text-blue-700">Tải Word</button>}
+                  <button disabled={isRecording || isAnalyzing || isSaving} className="text-red-600 disabled:opacity-50" onClick={async () => {
+                    if (!window.confirm('Xóa cuộc họp này khỏi dữ liệu đã lưu? Số biên bản đã cấp sẽ không được dùng lại.')) return;
+                    try { await deleteMeeting(record.id); await refreshMeetings();
+                      if (sessionRef.current.id === record.id) handleResetSession();
+                    } catch { setStorageMessage('Không xóa được cuộc họp.'); }
+                  }}>Xóa</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* TAB 1: GHI ÂM, GỠ BĂNG & CHỌN TRỢ LÝ AI */}
         {activeTab === 'pipeline' && (
           <div className="space-y-6">
@@ -651,7 +807,7 @@ Nơi nhận:
                     <Upload className="w-5 h-5 text-slate-400 mb-1" />
                     <span className="text-xs text-slate-600 font-medium">Nhấn để chọn tệp âm thanh cuộc họp</span>
                     <span className="text-[11px] text-slate-400">Hỗ trợ tệp ghi âm điện thoại, máy ghi âm hội trường</span>
-                    <input type="file" accept="audio/*" disabled={isRecording || isAnalyzing} onChange={handleFileUpload} className="hidden" />
+                    <input type="file" accept="audio/*" disabled={isRecording || isAnalyzing || isSaving} onChange={handleFileUpload} className="hidden" />
                   </label>
                 </div>
 
@@ -672,7 +828,7 @@ Nơi nhận:
 
                     <button
                       onClick={handleAnalyzeAudio}
-                      disabled={isAnalyzing || isRecording}
+                      disabled={isAnalyzing || isRecording || isSaving}
                       className="w-full py-2.5 bg-[#0A1E60] hover:bg-blue-900 text-white rounded text-xs font-bold flex items-center justify-center gap-2 shadow transition cursor-pointer disabled:opacity-50"
                     >
                       {isAnalyzing ? (
@@ -772,7 +928,7 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.superior_agency}
-                    onChange={(e) => setMetadata({ ...metadata, superior_agency: e.target.value })}
+                    readOnly
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
                 </div>
@@ -782,7 +938,7 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.agency_name}
-                    onChange={(e) => setMetadata({ ...metadata, agency_name: e.target.value })}
+                    readOnly
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded font-semibold text-[#0A1E60] focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
                 </div>
@@ -792,8 +948,8 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.document_code}
-                    onChange={(e) => setMetadata({ ...metadata, document_code: e.target.value })}
-                    placeholder="Số: .../BB-ĐHSPKTNĐ"
+                    readOnly
+                    placeholder="Tự cấp số khi lưu biên bản"
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded font-mono focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
                 </div>
@@ -813,7 +969,8 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.location_date}
-                    onChange={(e) => setMetadata({ ...metadata, location_date: e.target.value })}
+                    readOnly={!!sessionRef.current.recordingStartedAt}
+                    onChange={(e) => setMetadata({ ...metadata, location_date: 'Ninh Bình, ' + e.target.value.replace(/^Ninh Bình,?\s*/i, '') })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
                 </div>
@@ -823,6 +980,7 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.start_time}
+                    readOnly={!!sessionRef.current.recordingStartedAt}
                     onChange={(e) => setMetadata({ ...metadata, start_time: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />
@@ -833,6 +991,7 @@ Nơi nhận:
                   <input
                     type="text"
                     value={metadata.end_time}
+                    readOnly={!!sessionRef.current.recordingStartedAt}
                     onChange={(e) => setMetadata({ ...metadata, end_time: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-[#0A1E60] focus:outline-none"
                   />

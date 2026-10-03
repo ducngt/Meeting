@@ -19,7 +19,8 @@ import { AdministrativeMinutes } from './types';
  * Dành riêng cho Trường Đại học Sư phạm Kỹ thuật Nam Định (NUTE)
  */
 export async function generateWordDocument(minutes: AdministrativeMinutes): Promise<Blob> {
-  const { metadata, opening_statement, discussions, conclusions, tasks, closing_statement } = minutes;
+  const { opening_statement, discussions, conclusions, tasks, closing_statement } = minutes;
+  const metadata = { ...minutes.metadata, superior_agency: 'BỘ GIÁO DỤC VÀ ĐÀO TẠO', agency_name: 'TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH' };
 
   // Lề trang chuẩn NĐ 30/2020: Trên 20mm, Dưới 20mm, Trái 30mm, Phải 15mm
   const topMargin = convertMillimetersToTwip(20);

@@ -1,146 +1,472 @@
-// Gọi Gemini qua Cloudflare Worker. Key chỉ nằm trong Secret của Worker.
+// Gọi Gemini qua Cloudflare Worker.
+// API key chỉ nằm trong Secret của Worker.
 
 export function getSystemPrompt(): string {
-  const engineIntro = 'Bạn là trợ lý Google Gemini chuyên gỡ băng tiếng Việt và soạn biên bản theo nguồn âm thanh.';
+  return `Bạn là trợ lý chuyên gỡ băng tiếng Việt và soạn biên bản cuộc họp từ nguồn âm thanh.
 
-  return `${engineIntro}
-Nhiệm vụ của bạn là:
-1. Gỡ băng trung thực lời nói tiếng Việt từ file ghi âm cuộc họp (kèm mốc thời gian [HH:MM:SS] và tên người phát biểu).
-2. Soạn thảo BIÊN BẢN CUỘC HỌP CHUẨN NGHỊ ĐỊNH 30/2020/NĐ-CP của Chính phủ về công tác văn thư, thể thức văn bản hành chính phục vụ Hội nghị/Cuộc họp.
+Nhiệm vụ:
+1. Gỡ băng trung thực lời nói tiếng Việt, kèm mốc thời gian và người phát biểu nếu xác định được.
+2. Soạn nội dung biên bản hành chính để đưa vào mẫu biên bản có sẵn của phần mềm.
 
-BẮT BUỘC TRẢ VỀ DUY NHẤT ĐỊNH DẠNG JSON với cấu trúc chính xác sau:
+Yêu cầu bắt buộc:
+- Chỉ trả về một đối tượng JSON, không thêm giải thích hoặc Markdown.
+- Không bịa nội dung, tên người nói, kết luận, nhiệm vụ hoặc thời hạn.
+- Không coi các ví dụ cấu trúc là nội dung cuộc họp.
+- Không xác định người phát biểu chỉ dựa trên danh sách đại biểu.
+- Khi không biết tên người nói, dùng "Người phát biểu chưa xác định".
+- Thông tin chưa biết để chuỗi rỗng; danh sách không có dữ liệu để [].
+- Không khẳng định biên bản đã được đọc lại hoặc thông qua nếu âm thanh không xác nhận.
+- Không tự suy ra giờ kết thúc cuộc họp từ thời lượng tệp.
+- start và end là số giây tính từ đầu tệp, end không nhỏ hơn start.
+- start_fmt, end_fmt và timestamp dùng định dạng HH:MM:SS.
+
+Cấu trúc JSON:
 {
   "segments": [
     {
-      "start": 0.0,
-      "end": 5.0,
+      "start": 0,
+      "end": 5,
       "start_fmt": "00:00:00",
       "end_fmt": "00:00:05",
-      "speaker": "Tên người nói hoặc [Chủ trì/Đại biểu]",
-      "text": "Nội dung lời nói thực tế nghe được"
+      "speaker": "",
+      "text": ""
     }
   ],
   "minutes": {
-    "opening_statement": "Đồng chí Chủ trì phát biểu khai mạc, nêu rõ mục đích, yêu cầu và nội dung trọng tâm của cuộc họp.",
+    "opening_statement": "",
     "discussions": [
       {
-        "speaker": "Tên người phát biểu",
-        "role": "Chức vụ (nếu có)",
-        "content": "Tóm tắt trung thực, ngắn gọn nội dung ý kiến đóng góp",
-        "timestamp": "00:00:00"
+        "speaker": "",
+        "role": "",
+        "content": "",
+        "timestamp": ""
       }
     ],
-    "conclusions": [
-      "Nội dung kết luận, chỉ đạo 1 của Chủ trì cuộc họp",
-      "Nội dung kết luận, chỉ đạo 2 của Chủ trì cuộc họp"
-    ],
+    "conclusions": [],
     "tasks": [
       {
         "code": "NV-01",
-        "task_name": "Tên nhiệm vụ hoặc sản phẩm đầu ra cụ thể",
-        "assigned_unit": "Đơn vị hoặc cá nhân chủ trì thực hiện",
-        "deadline": "Thời hạn hoàn thành (ngày/tháng/năm hoặc tuần)",
-        "requirements": "Yêu cầu chất lượng hoặc lưu ý thực thi"
+        "task_name": "",
+        "assigned_unit": "",
+        "deadline": "",
+        "requirements": ""
       }
     ],
-    "closing_statement": "Cuộc họp kết thúc vào hồi ... cùng ngày. Biên bản này đã được đọc lại cho toàn thể thành viên tham dự nghe và nhất trí thông qua."
+    "closing_statement": ""
   }
 }`;
 }
 
 export function cleanMime(mimeType?: string): string {
-  let clean = (mimeType || 'audio/webm').split(';')[0].trim().toLowerCase();
+  const clean = (mimeType || 'audio/webm')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+
   if (clean.includes('wav')) return 'audio/wav';
-  if (clean.includes('mp3') || clean.includes('mpeg')) return 'audio/mp3';
+  if (clean.includes('mp3') || clean.includes('mpeg')) {
+    return 'audio/mp3';
+  }
   if (clean.includes('ogg')) return 'audio/ogg';
-  if (clean.includes('mp4') || clean.includes('m4a')) return 'audio/mp4';
+  if (clean.includes('mp4') || clean.includes('m4a')) {
+    return 'audio/mp4';
+  }
   if (clean.includes('aac')) return 'audio/aac';
   if (clean.includes('flac')) return 'audio/flac';
+
   return 'audio/webm';
 }
 
 export function parseJSONSafely(text: string): any {
   let raw = text.trim();
-  if (raw.startsWith('```json')) raw = raw.slice(7);
-  if (raw.startsWith('```')) raw = raw.slice(3);
-  if (raw.endsWith('```')) raw = raw.slice(0, -3);
-  raw = raw.trim();
+
+  raw = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+
+  // Thử đọc JSON nguyên vẹn trước.
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Xử lý trường hợp AI thêm lời dẫn trước hoặc sau JSON.
+  }
 
   const firstBrace = raw.indexOf('{');
   const lastBrace = raw.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    raw = raw.slice(firstBrace, lastBrace + 1);
+
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+    } catch {
+      return null;
+    }
   }
 
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('[API] Lỗi parse JSON:', e);
-    return null;
-  }
+  return null;
 }
 
-// Danh sách mô hình thử lần lượt nếu mô hình trước bị quá tải hoặc không tồn tại
-const WORKER_URL = 'https://meeting-ai.ducngt.workers.dev/analyze';
+const WORKER_URL =
+  'https://meeting-ai.ducngt.workers.dev/analyze';
 
-// Gemini giới hạn ~20 MB cho toàn bộ yêu cầu gửi kèm dữ liệu âm thanh trực tiếp
-const MAX_BASE64_LENGTH = 19 * 1024 * 1024;
+// Giới hạn của bản Worker hiện tại: 20 MiB cho toàn bộ yêu cầu.
+const MAX_REQUEST_BYTES = 20 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 190_000;
+
+// Một lần gọi ban đầu và tối đa ba lần thử lại.
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 export interface AnalyzeOptions {
   audioBase64: string;
   mimeType?: string;
   metadata?: any;
+
+  // Tùy chọn; App.tsx cũ vẫn hoạt động khi không truyền vào.
+  onStatus?: (message: string) => void;
 }
 
-export async function analyzeAudioWithGemini(opts: AnalyzeOptions): Promise<any> {
-  const { audioBase64, mimeType, metadata } = opts;
+function wait(milliseconds: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, milliseconds);
+  });
+}
 
-  if (!audioBase64) {
-    throw new Error('Không có dữ liệu âm thanh cuộc họp để phân tích.');
+function reportStatus(
+  callback: AnalyzeOptions['onStatus'],
+  message: string
+): void {
+  try {
+    callback?.(message);
+  } catch {
+    // Lỗi cập nhật thông báo không làm gián đoạn phân tích.
   }
-  if (audioBase64.length > MAX_BASE64_LENGTH) {
-    throw new Error(
-      'File ghi âm quá lớn (giới hạn khoảng 14 MB, tương đương 15-30 phút tùy định dạng). Hãy cắt ngắn hoặc nén file rồi thử lại.'
+}
+
+function hasStrings(value: any, fields: string[]): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    fields.every(field => typeof value[field] === 'string')
+  );
+}
+
+function validateResult(parsed: any): boolean {
+  const minutes = parsed?.minutes;
+
+  return (
+    hasStrings(minutes, [
+      'opening_statement',
+      'closing_statement',
+    ]) &&
+    Array.isArray(minutes.discussions) &&
+    minutes.discussions.every((item: any) =>
+      hasStrings(item, [
+        'speaker',
+        'role',
+        'content',
+        'timestamp',
+      ])
+    ) &&
+    Array.isArray(minutes.conclusions) &&
+    minutes.conclusions.every(
+      (item: any) => typeof item === 'string'
+    ) &&
+    Array.isArray(minutes.tasks) &&
+    minutes.tasks.every((item: any) =>
+      hasStrings(item, [
+        'code',
+        'task_name',
+        'assigned_unit',
+        'deadline',
+        'requirements',
+      ])
+    ) &&
+    Array.isArray(parsed.segments) &&
+    parsed.segments.every(
+      (item: any) =>
+        hasStrings(item, [
+          'start_fmt',
+          'end_fmt',
+          'speaker',
+          'text',
+        ]) &&
+        typeof item.start === 'number' &&
+        Number.isFinite(item.start) &&
+        item.start >= 0 &&
+        typeof item.end === 'number' &&
+        Number.isFinite(item.end) &&
+        item.end >= item.start
+    )
+  );
+}
+
+function getErrorMessage(
+  status: number,
+  data: any
+): string {
+  const message =
+    typeof data?.error?.message === 'string'
+      ? data.error.message
+      : '';
+
+  if (status === 429) {
+    return (
+      'Dịch vụ AI đã vượt hạn mức yêu cầu. ' +
+      'Hãy chờ rồi thử lại.'
     );
   }
 
-  const userPrompt = `Dưới đây là thông tin cuộc họp hành chính do thư ký khai báo:
+  if (status === 503) {
+    return (
+      'AI vẫn đang quá tải sau các lần thử lại. ' +
+      'Hãy giữ bản ghi âm và thử lại sau vài phút.'
+    );
+  }
+
+  if (status === 413) {
+    return (
+      'Tệp ghi âm vượt giới hạn dung lượng của máy chủ. ' +
+      'Hãy nén hoặc chia nhỏ tệp rồi thử lại.'
+    );
+  }
+
+  if (status === 504) {
+    return (
+      'Máy chủ xử lý quá lâu và đã hết thời gian chờ. ' +
+      'Hãy thử lại hoặc dùng bản ghi ngắn hơn.'
+    );
+  }
+
+  if (/user location is not supported/i.test(message)) {
+    return (
+      'Google từ chối vị trí xử lý của Worker. ' +
+      'Cần kiểm tra cấu hình vị trí Worker.'
+    );
+  }
+
+  return message || `Máy chủ phân tích báo lỗi ${status}.`;
+}
+
+export async function analyzeAudioWithGemini(
+  opts: AnalyzeOptions
+): Promise<any> {
+  const {
+    audioBase64,
+    mimeType,
+    metadata,
+    onStatus,
+  } = opts;
+
+  if (
+    typeof audioBase64 !== 'string' ||
+    !audioBase64.trim()
+  ) {
+    throw new Error(
+      'Không có dữ liệu âm thanh cuộc họp để phân tích.'
+    );
+  }
+
+  // Loại bỏ tiền tố Data URL nếu đầu vào có tiền tố.
+  const audioData = audioBase64
+    .trim()
+    .replace(/^data:[^,]*;base64,/i, '')
+    .replace(/\s+/g, '');
+
+  if (!audioData) {
+    throw new Error('Dữ liệu âm thanh bị trống.');
+  }
+
+  // Kiểm tra sớm để tránh tạo yêu cầu quá lớn.
+  if (audioData.length >= MAX_REQUEST_BYTES) {
+    throw new Error(
+      'Tệp ghi âm quá lớn để gửi trực tiếp. ' +
+      'Hãy nén hoặc chia nhỏ tệp rồi thử lại.'
+    );
+  }
+
+  const userPrompt = `Thông tin cuộc họp do thư ký khai báo:
 ${JSON.stringify(metadata || {}, null, 2)}
 
-Hãy nghe toàn bộ tệp âm thanh này, gỡ băng tiếng Việt trung thực và soạn thảo BIÊN BẢN CUỘC HỌP CHUẨN NGHỊ ĐỊNH 30/2020/NĐ-CP theo đúng định dạng JSON yêu cầu.`;
+Hãy nghe toàn bộ âm thanh, gỡ băng trung thực và soạn nội dung biên bản theo cấu trúc JSON đã yêu cầu.
+Thông tin khai báo chỉ cung cấp bối cảnh; không dùng để bịa nội dung phát biểu.
+Chỉ ghi nhận kết luận và nhiệm vụ có căn cứ trong âm thanh.`;
 
   const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: getSystemPrompt() }] },
+    systemInstruction: {
+      parts: [{ text: getSystemPrompt() }],
+    },
     contents: [
       {
         role: 'user',
-        parts: [{ inlineData: { mimeType: cleanMime(mimeType), data: audioBase64 } }, { text: userPrompt }],
+        parts: [
+          {
+            inlineData: {
+              mimeType: cleanMime(mimeType),
+              data: audioData,
+            },
+          },
+          { text: userPrompt },
+        ],
       },
     ],
-    generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+    },
   });
 
-  let res: Response;
-  try {
-    res = await fetch(WORKER_URL, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body, signal: AbortSignal.timeout(190000)
-    });
-  } catch {
-    throw new Error('Không kết nối được máy chủ phân tích. Kiểm tra URL Worker, mạng hoặc thử bản ghi ngắn hơn.');
+  // Tính cả prompt và thông tin cuộc họp trong giới hạn.
+  if (new Blob([body]).size > MAX_REQUEST_BYTES) {
+    throw new Error(
+      'Tổng dữ liệu gửi vượt giới hạn 20 MiB. ' +
+      'Tệp âm thanh cần nhỏ hơn khoảng 15 MiB; ' +
+      'hãy nén hoặc chia nhỏ tệp.'
+    );
   }
-  let data: any;
-  try { data = await res.json(); }
-  catch { throw new Error('Máy chủ trả về dữ liệu không hợp lệ.'); }
-  if (!res.ok) {
-    const message = data?.error?.message || `Lỗi máy chủ ${res.status}`;
-    if (res.status === 429) throw new Error('Dịch vụ AI dùng chung đã hết hạn mức tạm thời. Hãy thử lại sau.');
-    throw new Error(message);
+
+  for (
+    let attempt = 0;
+    attempt <= RETRY_DELAYS_MS.length;
+    attempt++
+  ) {
+    reportStatus(
+      onStatus,
+      attempt === 0
+        ? 'Đang phân tích âm thanh và soạn biên bản…'
+        : `Đang thử lại lần ${attempt}/${RETRY_DELAYS_MS.length}…`
+    );
+
+    let response: Response;
+
+    // Mỗi lần thử có bộ đếm thời gian riêng.
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      REQUEST_TIMEOUT_MS
+    );
+
+    let responseText: string;
+
+    try {
+      response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      responseText = await response.text();
+    } catch {
+      if (controller.signal.aborted) {
+        throw new Error(
+          'Đã hết thời gian chờ phân tích. ' +
+          'Bản ghi âm vẫn được giữ trong phiên hiện tại; ' +
+          'hãy thử lại hoặc dùng bản ghi ngắn hơn.'
+        );
+      }
+
+      throw new Error(
+        'Không kết nối được máy chủ phân tích. ' +
+        'Hãy kiểm tra mạng và thử lại.'
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    let data: any = null;
+
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      // Máy chủ quá tải có thể trả về HTML thay vì JSON.
+    }
+
+    if (!response.ok) {
+      // Chỉ tự thử lại các lỗi máy chủ tạm thời.
+      // Không tự thử lại lỗi khóa, vị trí hoặc hạn mức.
+      const retryable = [
+        500,
+        502,
+        503,
+        504,
+      ].includes(response.status);
+
+      if (
+        retryable &&
+        attempt < RETRY_DELAYS_MS.length
+      ) {
+        const delay = RETRY_DELAYS_MS[attempt];
+
+        reportStatus(
+          onStatus,
+          `AI đang bận. Sẽ thử lại sau ${delay / 1000} giây…`
+        );
+
+        await wait(delay);
+        continue;
+      }
+
+      throw new Error(
+        getErrorMessage(response.status, data)
+      );
+    }
+
+    if (!data) {
+      throw new Error(
+        'Máy chủ trả về dữ liệu không hợp lệ. ' +
+        'Hãy giữ bản ghi âm và thử lại.'
+      );
+    }
+
+    const candidate = data?.candidates?.[0];
+
+    if (candidate?.finishReason === 'MAX_TOKENS') {
+      throw new Error(
+        'Kết quả quá dài và bị cắt trước khi hoàn tất. ' +
+        'Cần chia bản ghi thành các đoạn để xử lý đầy đủ.'
+      );
+    }
+
+    const parts = candidate?.content?.parts;
+
+    const text = Array.isArray(parts)
+      ? parts
+          .filter(
+            (part: any) =>
+              !part.thought &&
+              typeof part.text === 'string'
+          )
+          .map((part: any) => part.text)
+          .join('')
+      : '';
+
+    const parsed = text
+      ? parseJSONSafely(text)
+      : null;
+
+    if (!validateResult(parsed)) {
+      throw new Error(
+        'AI chưa trả về biên bản đúng cấu trúc. ' +
+        'Hãy thử lại; nếu bản ghi dài, cần chia thành các đoạn.'
+      );
+    }
+
+    // Bảo đảm biên bản dùng thông tin thư ký đã khai báo.
+    parsed.minutes.metadata = metadata || {};
+    parsed.ai_engine_used = 'gemini';
+
+    reportStatus(
+      onStatus,
+      'Đã hoàn thành phân tích và soạn biên bản.'
+    );
+
+    return parsed;
   }
-  const text = (data?.candidates?.[0]?.content?.parts || [])
-    .filter((part: any) => !part.thought).map((part: any) => part.text || '').join('');
-  const parsed = text ? parseJSONSafely(text) : null;
-  if (!parsed?.minutes) throw new Error('AI chưa trả về biên bản hợp lệ. Hãy thử bản ghi rõ hơn.');
-  parsed.ai_engine_used = 'gemini';
-  return parsed;
+
+  throw new Error(
+    'Chưa phân tích được âm thanh. Hãy thử lại sau.'
+  );
 }

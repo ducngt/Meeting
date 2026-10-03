@@ -35,6 +35,7 @@ import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
 import { listMeetings, saveMeeting, deleteMeeting, recordingDate, recordingTime } from './lib/meetingStore';
 import type { SavedMeeting } from './lib/meetingStore';
+import { hasMinutesContent, minutesFromTranscript } from './lib/transcriptMinutes';
 import { analyzeAudioWithGemini } from './lib/geminiClient';
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -370,6 +371,9 @@ export default function App() {
         setSegments(data.segments);
       }
 
+      if (!hasMinutesContent(data.minutes)) {
+        data.minutes = await minutesFromTranscript(data.segments || [], metadataRef.current, setAnalysisStatus);
+      }
       if (data.minutes) {
         const nextMinutes = { ...data.minutes, metadata: { ...metadataRef.current } };
         setMinutes(nextMinutes);
@@ -394,6 +398,29 @@ export default function App() {
       setIsAnalyzing(false);
       setAnalysisStatus('');
     }
+  };
+
+  const handleRegenerateMinutes = async () => {
+    if (isRecording || isAnalyzing || isSaving) return;
+    setIsAnalyzing(true);
+    setRecordError(null);
+    try {
+      const result = await minutesFromTranscript(segments, metadataRef.current, setAnalysisStatus);
+      setMinutes(result);
+      setActiveTab('document');
+      try {
+        const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+          metadata: metadataRef.current, minutes: result, segments, audioBlob, audioFileName, duration: recordDuration });
+        setMetadata(saved.metadata);
+        setMinutes(saved.minutes);
+        await refreshMeetings();
+        setStorageMessage(`Đã lưu biên bản ${saved.metadata.document_code}.`);
+      } catch { setStorageMessage('Đã soạn biên bản nhưng chưa lưu được. Hãy tải Word về máy.'); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Không soạn được biên bản.';
+      setRecordError(`Lỗi xử lý: ${message}`);
+      setStorageMessage(message);
+    } finally { setIsAnalyzing(false); setAnalysisStatus(''); }
   };
 
   // Xuất file Word (.docx)
@@ -675,11 +702,14 @@ Nơi nhận:
                 className="px-3 py-2 bg-[#0A1E60] text-white rounded text-xs disabled:opacity-50">
                 {isSaving ? 'Đang lưu…' : 'Lưu cuộc họp'}
               </button>
+              <button onClick={handleRegenerateMinutes} disabled={!segments.some(segment => segment.text?.trim()) || isRecording || isAnalyzing || isSaving}
+                className="px-3 py-2 bg-blue-700 text-white rounded text-xs disabled:opacity-50">Soạn lại từ lời thoại</button>
               <button onClick={() => handleDownloadAudio()} disabled={!audioBlob || isRecording}
                 className="px-3 py-2 bg-slate-100 border rounded text-xs disabled:opacity-50">Tải bản ghi âm</button>
             </div>
           </div>
           <p className="text-xs text-slate-500">Lưu trên trình duyệt của máy này. Hãy tải âm thanh và Word về máy để giữ bản sao.</p>
+          {analysisStatus && <p role="status" className="text-sm text-blue-800">{analysisStatus}</p>}
           {storageMessage && <p role="status" className="text-sm text-blue-800">{storageMessage}</p>}
           <div className="space-y-2 max-h-64 overflow-auto">
             {savedMeetings.map(record => (

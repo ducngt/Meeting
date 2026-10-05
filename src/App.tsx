@@ -33,6 +33,8 @@ import { DEFAULT_METADATA, DEFAULT_ATTENDEES } from './sampleData';
 import { getSupportedMimeType } from './audioUtils';
 import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
+import MinutesEditor from './MinutesEditor';
+import { isReviewed, approveMinutes } from './lib/minutesReview';
 import { listMeetings, saveMeeting, deleteMeeting, recordingDate, recordingTime } from './lib/meetingStore';
 import type { SavedMeeting } from './lib/meetingStore';
 import { minutesFromTranscript } from './lib/transcriptMinutes';
@@ -68,7 +70,7 @@ export default function App() {
   const [savedMeetings, setSavedMeetings] = useState<SavedMeeting[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [storageMessage, setStorageMessage] = useState('');
-  const sessionRef = useRef({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), recordingStartedAt: '', recordingEndedAt: '' });
+  const sessionRef = useRef<{ id: string; createdAt: string; recordingStartedAt: string; recordingEndedAt: string }>({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), recordingStartedAt: '', recordingEndedAt: '' });
   const metadataRef = useRef(metadata);
   metadataRef.current = metadata;
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -401,7 +403,27 @@ export default function App() {
   };
 
   // Xuất file Word (.docx)
+  const reviewed = isReviewed(minutes ? { ...minutes, metadata } : null);
+  const handleApproveMinutes = async (draft: AdministrativeMinutes) => {
+    if (isRecording || isAnalyzing || isSaving) throw new Error('Đang xử lý cuộc họp.');
+    setIsSaving(true);
+    try {
+      const approved = approveMinutes({ ...draft, metadata });
+      const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+        metadata, minutes: approved, segments, audioBlob, audioFileName, duration: recordDuration });
+      setMetadata(saved.metadata); setMinutes(saved.minutes);
+      await refreshMeetings();
+      setStorageMessage(`Đã xác nhận và lưu biên bản ${saved.metadata.document_code}.`);
+    } finally { setIsSaving(false); }
+  };
+  const handlePrintMinutes = () => {
+    if (!reviewed) { alert('Thư ký cần hoàn thiện và xác nhận biên bản trước khi xuất PDF.'); setActiveTab('document'); return; }
+    setActiveTab('document');
+    window.setTimeout(() => window.print(), 250);
+  };
+
   const handleDownloadWord = async () => {
+    if (!reviewed) { alert('Thư ký cần hoàn thiện và xác nhận biên bản trước khi xuất Word.'); setActiveTab('document'); return; }
     if (!minutes) {
       alert('Chưa có nội dung biên bản cuộc họp. Vui lòng ghi âm và soạn thảo tại Tab 2 trước khi xuất file Word.');
       return;
@@ -587,7 +609,7 @@ Nơi nhận:
 
             <button
               onClick={handleDownloadWord}
-              disabled={isExportingWord || !minutes}
+              disabled={isExportingWord || !reviewed}
               className="text-xs px-4 py-1.5 rounded bg-[#FEE000] hover:bg-yellow-400 text-[#0A1E60] font-bold transition flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50"
             >
               {isExportingWord ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5 text-[#0A1E60]" />}
@@ -701,7 +723,7 @@ Nơi nhận:
                 <div className="flex gap-2">
                   <button disabled={isRecording || isAnalyzing || isSaving} onClick={() => handleOpenMeeting(record.id)} className="text-blue-700 disabled:opacity-50">Mở</button>
                   {record.audioBlob && <button onClick={() => handleDownloadAudio(record.audioBlob, record.audioFileName)} className="text-blue-700">Tải âm thanh</button>}
-                  {record.minutes && <button onClick={async () => {
+                  {record.minutes && <button disabled={!isReviewed({ ...record.minutes, metadata: record.metadata })} title="Biên bản cần được thư ký xác nhận trước khi xuất Word" onClick={async () => {
                     try { const blob = await generateWordDocument({ ...record.minutes!, metadata: record.metadata });
                       downloadWordDocument(blob, `Bien_ban_${record.metadata.document_code.replace(/[^a-zA-Z0-9]/g, '_')}.docx`);
                     } catch { setStorageMessage('Không xuất được Word. Hãy thử mở cuộc họp rồi xuất lại.'); }
@@ -1374,6 +1396,10 @@ Nơi nhận:
             ) : (
               // Trạng thái khi đã có biên bản thực tế được AI soạn thảo
               <>
+                <MinutesEditor key={sessionRef.current.id} minutes={{ ...minutes, metadata }} attendees={attendeeList}
+                  disabled={isRecording || isAnalyzing || isSaving}
+                  onChange={setMinutes} onApprove={handleApproveMinutes} onSave={handleSaveMeeting} />
+                <p className="no-print text-sm font-semibold text-[#0A1E60]">{reviewed ? 'Biên bản đã được thư ký xác nhận.' : 'Dự thảo: hoàn thiện và xác nhận ở mục trên trước khi xuất Word / PDF.'}</p>
                 {/* PDF Toolbar */}
                 <div className="no-print flex flex-wrap items-center justify-between gap-3 bg-slate-800 text-white p-3 rounded-t-lg shadow-sm">
                   <div className="flex items-center gap-2.5">
@@ -1397,7 +1423,7 @@ Nơi nhận:
                       {copiedText ? 'Đã sao chép!' : 'Sao chép'}
                     </button>
                     <button
-                      onClick={() => window.print()}
+                      onClick={handlePrintMinutes}
                       className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow"
                       title="Mở hộp thoại in để lưu trực tiếp dạng PDF khổ A4"
                     >
@@ -1406,7 +1432,7 @@ Nơi nhận:
                     </button>
                     <button
                       onClick={handleDownloadWord}
-                      disabled={isExportingWord}
+                      disabled={isExportingWord || !reviewed}
                       className="px-3.5 py-1.5 bg-[#FEE000] hover:bg-yellow-400 text-[#0A1E60] font-bold rounded text-xs flex items-center gap-1.5 transition cursor-pointer shadow disabled:opacity-50"
                     >
                       {isExportingWord ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -1532,7 +1558,7 @@ Nơi nhận:
                             {minutes.discussions && minutes.discussions.length > 0 ? (
                               minutes.discussions.map((d, idx) => (
                                 <p key={idx} className="text-justify">
-                                  - <strong className="font-bold">Ý kiến {idx + 1} ({d.speaker}{d.role ? ` - ${d.role}` : ''}):</strong> {d.content}
+                                  - <strong className="font-bold">Nội dung {idx + 1} ({d.speaker}{d.role ? ` - ${d.role}` : ''}):</strong> {d.content}
                                 </p>
                               ))
                             ) : (
@@ -1666,7 +1692,7 @@ Nơi nhận:
                 </div>
                 <button
                   onClick={handleDownloadWord}
-                  disabled={isExportingWord || !minutes}
+                  disabled={isExportingWord || !reviewed}
                   className="w-full py-2.5 bg-[#0A1E60] hover:bg-blue-900 text-white font-bold rounded text-xs flex items-center justify-center gap-2 shadow cursor-pointer disabled:opacity-50"
                 >
                   {isExportingWord ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5 text-yellow-300" />}
@@ -1705,7 +1731,7 @@ Nơi nhận:
                   </p>
                 </div>
                 <button
-                  onClick={() => window.print()}
+                  onClick={handlePrintMinutes}
                   disabled={!minutes}
                   className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs flex items-center justify-center gap-2 shadow cursor-pointer disabled:opacity-50"
                 >

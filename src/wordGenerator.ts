@@ -13,12 +13,14 @@ import {
   ShadingType,
 } from 'docx';
 import { AdministrativeMinutes } from './types';
+import { isReviewed } from './lib/minutesReview';
 
 /**
  * Sinh file Word (.docx) chuẩn theo thể thức Nghị định 30/2020/NĐ-CP của Chính phủ
  * Dành riêng cho Trường Đại học Sư phạm Kỹ thuật Nam Định (NUTE)
  */
 export async function generateWordDocument(minutes: AdministrativeMinutes): Promise<Blob> {
+  if (!isReviewed(minutes)) throw new Error('Thư ký cần hoàn thiện và xác nhận biên bản trước khi xuất Word.');
   const { opening_statement, discussions, conclusions, tasks, closing_statement } = minutes;
   const metadata = { ...minutes.metadata, superior_agency: 'BỘ GIÁO DỤC VÀ ĐÀO TẠO', agency_name: 'TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH' };
 
@@ -343,7 +345,7 @@ export async function generateWordDocument(minutes: AdministrativeMinutes): Prom
                     spacing: { before: 40, after: 40 },
                     children: [
                       new TextRun({
-                        text: `- Ý kiến ${idx + 1} (${item.speaker || 'Thành viên'}${item.role ? ` - ${item.role}` : ''}): `,
+                        text: `- Nội dung ${idx + 1} (${item.speaker || 'Thành viên'}${item.role ? ` - ${item.role}` : ''}): `,
                         bold: true,
                       }),
                       new TextRun({ text: item.content }),

@@ -44,7 +44,7 @@ export async function minutesFromTranscript(segments: TranscriptSegment[], metad
       const data=await requestGeminiJSON({
         systemInstruction:{parts:[{text:`Soạn nội dung biên bản từ nhóm lời thoại nguồn, không bịa.
 Chỉ trả JSON có opening_statement (chuỗi), discussions (mảng đối tượng speaker, role, content, timestamp đều là chuỗi), conclusions (mảng chuỗi), tasks (mảng đối tượng code, task_name, assigned_unit, deadline, requirements đều là chuỗi), closing_statement (chuỗi).
-Nếu có lời thoại thì discussions phải có nội dung tóm tắt trung thực, kể cả khi là thuyết trình hay trao đổi không có quyết định. Tóm tắt theo từng ý, không chép nguyên văn toàn bộ.
+Nếu có lời thoại thì discussions phải có nội dung tóm tắt trung thực, kể cả khi là thuyết trình hay trao đổi không có quyết định. Ưu tiên 1–3 mục theo chủ đề trong nhóm nguồn này; không tạo một mục cho mỗi phân đoạn âm thanh. Mỗi mục có thể gồm nhiều ý; giữ các quyết định, số liệu và nhiệm vụ quan trọng. Nếu nguồn xác nhận những người phát biểu khác nhau thì giữ riêng ý kiến của họ, không ép gộp. Người chưa rõ tên dùng nhãn Nội dung tổng hợp — chưa xác định người phát biểu; không đánh số người nói. Không chép nguyên văn toàn bộ.
 Đây chỉ là một phần nguồn: chỉ ghi khai mạc/kết thúc nếu nguồn phần này xác nhận. Không tự coi ý kiến người nói là kết luận của chủ trì. Không suy ra tên người nói từ danh sách đại biểu; giữ nhãn chưa xác định. Không bịa nhiệm vụ, thời hạn hay việc thông qua biên bản. Mục chưa có dữ liệu để chuỗi rỗng hoặc []. Giữ mốc thời gian nguồn.`}]},
         contents:[{role:'user',parts:[{text}]}],generationConfig:{temperature:0.1,responseMimeType:'application/json'},
       },onStatus);

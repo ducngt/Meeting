@@ -58,8 +58,8 @@ export async function saveMeeting(record: SavedMeeting): Promise<SavedMeeting> {
           minutes: record.minutes ? { ...record.minutes, metadata } : null };
         meetings.put(saved);
       };
-      if (old?.minutes?.metadata.document_code) {
-        metadata.document_code = old.minutes.metadata.document_code;
+      if (old?.metadata.document_code) {
+        metadata.document_code = old.metadata.document_code;
         finish();
       } else if (record.minutes) {
         const declaredYear = !record.recordingStartedAt ? record.metadata.location_date?.match(/năm\s+(\d{4})/)?.[1] : undefined;

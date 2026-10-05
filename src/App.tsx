@@ -35,21 +35,8 @@ import { generateWordDocument, downloadWordDocument } from './wordGenerator';
 import { NuteLogo } from './NuteLogo';
 import { listMeetings, saveMeeting, deleteMeeting, recordingDate, recordingTime } from './lib/meetingStore';
 import type { SavedMeeting } from './lib/meetingStore';
-import { hasMinutesContent, minutesFromTranscript } from './lib/transcriptMinutes';
-import { analyzeAudioWithGemini } from './lib/geminiClient';
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
+import { minutesFromTranscript } from './lib/transcriptMinutes';
+import { transcribeLongAudio } from './lib/longAudioClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'pipeline' | 'metadata' | 'document' | 'export'>('metadata');
@@ -119,6 +106,14 @@ export default function App() {
     link.href = url;
     link.download = name || 'ghi-am-cuoc-hop.webm';
     link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleDownloadTranscript = () => {
+    const text = segments.map(segment => `[${segment.start_fmt} – ${segment.end_fmt}] ${segment.speaker}\n${segment.text}`).join('\n\n');
+    const blob = new Blob(['\ufeff', text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'Ban-chep-loi.txt'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
@@ -344,54 +339,36 @@ export default function App() {
     setRecordError(null);
     setAnalysisStatus(`Trợ lý Google Gemini đang kết nối và xử lý tệp âm thanh cuộc họp...`);
 
+    let completedSegments = segments;
+    let completedMinutes = minutes;
     try {
-      const base64 = await blobToBase64(audioBlob);
-      let mimeType = audioBlob.type;
-      if (!mimeType || mimeType === 'application/octet-stream') {
-        const ext = audioFileName.split('.').pop()?.toLowerCase();
-        if (ext === 'wav') mimeType = 'audio/wav';
-        else if (ext === 'mp3') mimeType = 'audio/mp3';
-        else if (ext === 'm4a' || ext === 'mp4') mimeType = 'audio/mp4';
-        else if (ext === 'ogg') mimeType = 'audio/ogg';
-        else if (ext === 'flac') mimeType = 'audio/flac';
-        else mimeType = 'audio/webm';
-      }
-
-      setAnalysisStatus(`Trợ lý Google Gemini đang gỡ băng lời nói tiếng Việt và tổng hợp các ý kiến thảo luận...`);
-
-      const data = await analyzeAudioWithGemini({
-        audioBase64: base64,
-        mimeType: mimeType,
-        metadata: metadata,
+      // Save the original recording once so it can be reopened after reload.
+      await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+        metadata: metadataRef.current, minutes, segments, audioBlob, audioFileName, duration: recordDuration });
+      await refreshMeetings();
+      completedSegments = await transcribeLongAudio(audioBlob, sessionRef.current.id, setAnalysisStatus, partial => {
+        completedSegments = partial;
+        setSegments(partial);
       });
-
-      setAnalysisStatus(`Trợ lý Google Gemini đang hoàn thiện Biên bản cuộc họp chuẩn thể thức Nghị định 30/2020/NĐ-CP...`);
-
-      if (data.segments && Array.isArray(data.segments)) {
-        setSegments(data.segments);
-      }
-
-      if (!hasMinutesContent(data.minutes)) {
-        data.minutes = await minutesFromTranscript(data.segments || [], metadataRef.current, setAnalysisStatus);
-      }
-      if (data.minutes) {
-        const nextMinutes = { ...data.minutes, metadata: { ...metadataRef.current } };
-        setMinutes(nextMinutes);
-        try {
-          const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
-            metadata: nextMinutes.metadata, minutes: nextMinutes, segments: data.segments || [],
-            audioBlob, audioFileName, duration: recordDuration });
-          setMetadata(saved.metadata);
-          setMinutes(saved.minutes);
-          await refreshMeetings();
-          setStorageMessage(`Đã tự động lưu biên bản ${saved.metadata.document_code}.`);
-        } catch {
-          setStorageMessage('Biên bản đã tạo nhưng chưa lưu được vào trình duyệt. Hãy tải Word và âm thanh về máy.');
-        }
-      }
+      const nextMinutes = await minutesFromTranscript(completedSegments, metadataRef.current, setAnalysisStatus);
+      completedMinutes = nextMinutes;
+      setMinutes(nextMinutes);
+      const saved = await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+        metadata: metadataRef.current, minutes: nextMinutes, segments: completedSegments,
+        audioBlob, audioFileName, duration: recordDuration });
+      setMetadata(saved.metadata);
+      setMinutes(saved.minutes);
+      await refreshMeetings();
+      setStorageMessage(`Đã lưu biên bản ${saved.metadata.document_code}.`);
 
       setActiveTab('document');
     } catch (err: any) {
+      try {
+        await persistMeeting({ ...sessionRef.current, updatedAt: new Date().toISOString(),
+          metadata: metadataRef.current, minutes: completedMinutes, segments: completedSegments,
+          audioBlob, audioFileName, duration: recordDuration });
+        await refreshMeetings();
+      } catch { setStorageMessage('Không lưu được cuộc họp vào trình duyệt. Hãy tải bản ghi âm về máy.'); }
       console.error('Lỗi khi phân tích âm thanh:', err);
       setRecordError(`Lỗi xử lý: ${err.message || 'Không thể hoàn tất phân tích.'}`);
     } finally {
@@ -702,6 +679,8 @@ Nơi nhận:
                 className="px-3 py-2 bg-[#0A1E60] text-white rounded text-xs disabled:opacity-50">
                 {isSaving ? 'Đang lưu…' : 'Lưu cuộc họp'}
               </button>
+              <button onClick={handleDownloadTranscript} disabled={!segments.length}
+                className="px-3 py-2 bg-slate-100 border rounded text-xs disabled:opacity-50">Tải lời thoại</button>
               <button onClick={handleRegenerateMinutes} disabled={!segments.some(segment => segment.text?.trim()) || isRecording || isAnalyzing || isSaving}
                 className="px-3 py-2 bg-blue-700 text-white rounded text-xs disabled:opacity-50">Soạn lại từ lời thoại</button>
               <button onClick={() => handleDownloadAudio()} disabled={!audioBlob || isRecording}

@@ -20,7 +20,7 @@ export default {
     if (!request.headers.get('Content-Type')?.includes('application/json')) return reply('Cần dữ liệu JSON.', 415);
     const size = Number(request.headers.get('Content-Length') || 0);
     if (size > MAX_BODY_BYTES) return reply('Bản ghi quá lớn. Hãy chia nhỏ hoặc nén âm thanh.', 413);
-    const model = env.GEMINI_MODEL || 'gemini-flash-latest';
+    const model = env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
     if (!/^[a-zA-Z0-9._-]+$/.test(model)) return reply('Tên mô hình trong Worker không hợp lệ.', 503);
     // Chuyển tiếp theo luồng để không parse/copy toàn bộ base64 trong Worker Free.
     let received = 0;
@@ -44,7 +44,7 @@ export default {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           body: limited,
-          signal: AbortSignal.timeout(180000)
+          signal: AbortSignal.timeout(85000)
         }
       );
       return new Response(response.body, {
@@ -52,7 +52,7 @@ export default {
         headers: { ...cors, 'Content-Type': 'application/json; charset=utf-8' }
       });
     } catch {
-      return reply(oversized ? 'Bản ghi quá lớn.' : 'Không kết nối được Gemini hoặc xử lý quá thời gian. Hãy thử bản ghi ngắn hơn.', oversized ? 413 : 502);
+      return reply(oversized ? 'Bản ghi quá lớn.' : 'Không kết nối được Gemini hoặc xử lý quá thời gian. Tiến độ được giữ; hãy thử tiếp tục.', oversized ? 413 : 502);
     }
   }
 };

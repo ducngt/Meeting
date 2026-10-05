@@ -470,3 +470,38 @@ Chỉ ghi nhận kết luận và nhiệm vụ có căn cứ trong âm thanh.`;
     'Chưa phân tích được âm thanh. Hãy thử lại sau.'
   );
 }
+// Small, bounded requests for chunk transcription and transcript summaries.
+export async function requestGeminiJSON(body: unknown, onStatus: (message: string) => void): Promise<any> {
+  const payload = JSON.stringify(body);
+  if (new Blob([payload]).size > MAX_REQUEST_BYTES) throw new Error('Đoạn gửi vượt giới hạn máy chủ.');
+  const delays = [5000, 15000];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 100000);
+    let response: Response, raw: string;
+    try {
+      response = await fetch(WORKER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, signal: controller.signal });
+      raw = await response.text();
+    } catch {
+      throw new Error('Kết nối hết thời gian chờ. Tiến độ đã hoàn thành được giữ; bấm tạo biên bản để tiếp tục.');
+    } finally { clearTimeout(timer); }
+    let data: any;
+    try { data = JSON.parse(raw); } catch { data = null; }
+    if (!response.ok) {
+      if ([500,502,503,504,524].includes(response.status) && attempt < delays.length) {
+        onStatus(`AI đang bận, thử lại sau ${delays[attempt]/1000} giây…`);
+        await new Promise(resolve => setTimeout(resolve, delays[attempt])); continue;
+      }
+      if (response.status === 429) throw new Error('AI đã vượt hạn mức miễn phí. Tiến độ được giữ; hãy mở lại cuộc họp và tiếp tục khi hạn mức được phục hồi.');
+      throw new Error(data?.error?.message || `Máy chủ báo lỗi ${response.status}. Tiến độ được giữ để tiếp tục.`);
+    }
+    const candidate = data?.candidates?.[0];
+    if (candidate?.finishReason === 'MAX_TOKENS') throw new Error('Kết quả đoạn này bị cắt. Chưa lưu đoạn lỗi; hãy thử lại.');
+    const parts = candidate?.content?.parts;
+    const text = (Array.isArray(parts) ? parts : []).filter((p: any) => !p.thought).map((p: any) => p.text || '').join('');
+    const parsed = parseJSONSafely(text);
+    if (!parsed) throw new Error('AI trả dữ liệu sai định dạng. Đoạn lỗi chưa được lưu.');
+    return parsed;
+  }
+  throw new Error('Không hoàn thành yêu cầu AI.');
+}

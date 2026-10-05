@@ -22,7 +22,12 @@ export function normalizeTranscript(data: any, offset: number, duration: number)
     }
     return undefined;
   };
-  return source.map((item: any) => {
+  // Empty text denotes a pause, not a failure of the complete chunk.
+  const spoken = source.filter((item: any) => {
+    const text = typeof item === 'string' ? item : item?.text;
+    return !(typeof text === 'string' && !text.trim());
+  });
+  return spoken.map((item: any) => {
     const text = typeof item === 'string' ? item : item?.text;
     if (typeof text !== 'string' || !text.trim()) throw new Error('AI trả một mục lời thoại không có nội dung.');
     const start = seconds(item?.start ?? item?.start_fmt);

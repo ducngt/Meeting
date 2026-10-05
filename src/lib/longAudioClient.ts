@@ -7,6 +7,34 @@ const stamp = (seconds: number) => {
   const value = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(value/3600)).padStart(2,'0')}:${String(Math.floor(value/60)%60).padStart(2,'0')}:${String(value%60).padStart(2,'0')}`;
 };
+export function normalizeTranscript(data: any, offset: number, duration: number): TranscriptSegment[] {
+  const source = data?.segments ?? data?.transcript;
+  if (!Array.isArray(source)) throw new Error('AI không trả danh sách lời thoại.');
+  const seconds = (value: unknown): number | undefined => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const cleaned = value.trim();
+    if (/^\d+(?:[.,]\d+)?$/.test(cleaned)) return Number(cleaned.replace(',', '.'));
+    if (/^\d+:\d{2}(?::\d{2})?(?:\.\d+)?$/.test(cleaned)) {
+      const parts = cleaned.split(':').map(Number);
+      if (parts.slice(1).some(part => part >= 60)) return undefined;
+      return parts.reduce((total,part) => total*60+part,0);
+    }
+    return undefined;
+  };
+  return source.map((item: any) => {
+    const text = typeof item === 'string' ? item : item?.text;
+    if (typeof text !== 'string' || !text.trim()) throw new Error('AI trả một mục lời thoại không có nội dung.');
+    const start = seconds(item?.start ?? item?.start_fmt);
+    const end = seconds(item?.end ?? item?.end_fmt);
+    const timed = start !== undefined && end !== undefined && start >= 0 && end >= start && end <= duration + 10;
+    // Numeric anchors are required by the existing type; blank labels mean unknown timing.
+    return { start: timed ? start!+offset : offset, end: timed ? end!+offset : offset,
+      start_fmt: timed ? stamp(start!+offset) : '', end_fmt: timed ? stamp(end!+offset) : '',
+      speaker: typeof item?.speaker === 'string' && item.speaker.trim() ? item.speaker : 'Người phát biểu chưa xác định',
+      text: text.trim() };
+  });
+}
 async function base64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = '';
@@ -32,12 +60,12 @@ export async function transcribeLongAudio(file: Blob, sessionId: string,
           contents: [{role:'user',parts:[{inlineData:{mimeType:chunk.blob.type,data:await base64(chunk.blob)}},{text:'Gỡ băng toàn bộ đoạn âm thanh này.'}]}],
           generationConfig: {temperature:0.1,responseMimeType:'application/json'},
         },onStatus);
-        if (!Array.isArray(data.segments) || !data.segments.every((s: any) => s && typeof s.text==='string' && typeof s.speaker==='string' &&
-          Number.isFinite(s.start) && Number.isFinite(s.end) && s.start>=0 && s.end>=s.start && s.end<=chunk.end-chunk.start+10)) {
-          throw new Error(`AI trả lời thoại không hợp lệ ở đoạn ${index+1}. Tiến độ trước đó được giữ.`);
+        try {
+          result = normalizeTranscript(data, chunk.start, chunk.end-chunk.start);
+        } catch {
+          console.warn('Định dạng lời thoại AI chưa hợp lệ:', data);
+          throw new Error(`AI chưa trả nội dung lời thoại đọc được ở đoạn ${index+1}. Tiến độ trước đó được giữ.`);
         }
-        result = data.segments.map((s: any) => ({ ...s, start:s.start+chunk.start, end:s.end+chunk.start,
-          start_fmt:stamp(s.start+chunk.start),end_fmt:stamp(s.end+chunk.start) })) as TranscriptSegment[];
         await saveProgress(key,result);
         // Avoid sending many requests simultaneously on the shared free quota.
         await new Promise(resolve => setTimeout(resolve,4000));

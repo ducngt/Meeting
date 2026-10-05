@@ -1770,7 +1770,7 @@ Nơi nhận:
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-600">
         <div className="flex items-center justify-center gap-2">
           <NuteLogo className="w-4 h-4" />
-          <span>TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH • Đường Phù Nghĩa, Phường Hạ Long, TP. Nam Định</span>
+          <span>TRƯỜNG ĐẠI HỌC SƯ PHẠM KỸ THUẬT NAM ĐỊNH • Số 172, đường Phù Nghĩa, Phường Thiên Trường, Tỉnh Ninh Bình</span>
         </div>
       </footer>
     </div>

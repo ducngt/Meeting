@@ -470,9 +470,27 @@ Chỉ ghi nhận kết luận và nhiệm vụ có căn cứ trong âm thanh.`;
     'Chưa phân tích được âm thanh. Hãy thử lại sau.'
   );
 }
+function structuredSchema(audio: boolean): any {
+  const strings = (fields: string[]) => ({ type: 'OBJECT', properties: Object.fromEntries(fields.map(field => [field, { type: 'STRING' }])), required: fields });
+  if (audio) return { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: {
+    type: 'OBJECT', properties: { start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, speaker: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['start','end','speaker','text']
+  } } }, required: ['segments'] };
+  return { type: 'OBJECT', properties: {
+    opening_statement: { type: 'STRING' },
+    discussions: { type: 'ARRAY', items: strings(['speaker','role','content','timestamp']) },
+    conclusions: { type: 'ARRAY', items: { type: 'STRING' } },
+    tasks: { type: 'ARRAY', items: strings(['code','task_name','assigned_unit','deadline','requirements']) },
+    closing_statement: { type: 'STRING' }
+  }, required: ['opening_statement','discussions','conclusions','tasks','closing_statement'] };
+}
+
 // Small, bounded requests for chunk transcription and transcript summaries.
 export async function requestGeminiJSON(body: unknown, onStatus: (message: string) => void): Promise<any> {
-  const payload = JSON.stringify(body);
+  const input = body as any;
+  const audio = input?.contents?.some((content: any) => content.parts?.some((part: any) => !!part.inlineData));
+  const config = { ...input.generationConfig, responseMimeType: 'application/json', responseSchema: structuredSchema(!!audio) };
+  delete config.responseJsonSchema;
+  const payload = JSON.stringify({ ...input, generationConfig: config });
   if (new Blob([payload]).size > MAX_REQUEST_BYTES) throw new Error('Đoạn gửi vượt giới hạn máy chủ.');
   const delays = [5000, 15000];
   for (let attempt = 0; attempt <= delays.length; attempt++) {
@@ -500,7 +518,18 @@ export async function requestGeminiJSON(body: unknown, onStatus: (message: strin
     const parts = candidate?.content?.parts;
     const text = (Array.isArray(parts) ? parts : []).filter((p: any) => !p.thought).map((p: any) => p.text || '').join('');
     const parsed = parseJSONSafely(text);
-    if (!parsed) throw new Error('AI trả dữ liệu sai định dạng. Đoạn lỗi chưa được lưu.');
+    if (!parsed) {
+      console.warn('Gemini không trả JSON đọc được:', { finishReason: candidate?.finishReason, promptFeedback: data?.promptFeedback, text });
+      if (data?.promptFeedback?.blockReason || ['SAFETY','RECITATION','PROHIBITED_CONTENT'].includes(candidate?.finishReason)) {
+        throw new Error('Gemini từ chối xử lý đoạn này. Tiến độ trước đó vẫn được giữ.');
+      }
+      if (attempt < delays.length) {
+        onStatus('AI trả dữ liệu chưa đúng định dạng, đang thử lại đoạn này…');
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+        continue;
+      }
+      throw new Error('AI vẫn chưa trả dữ liệu đúng cấu trúc sau khi thử lại. Tiến độ trước đó được giữ.');
+    }
     return parsed;
   }
   throw new Error('Không hoàn thành yêu cầu AI.');
